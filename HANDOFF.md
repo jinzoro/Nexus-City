@@ -386,3 +386,53 @@ browser for intro, zoom/pan, hover, selection, search, all six panels, facility
 view, minimap, events, overlays, audio and keyboard shortcuts. The personality
 pass adds per-building facades/crowns/storefronts/quirks, richer props, readable
 pedestrian sprites and detailed isometric vehicles.
+
+---
+
+# Roadmap
+
+Ideas for next iterations, ordered by value for effort.
+
+### Quick wins
+- [ ] **Shareable views** — encode seed + camera in the URL (`?seed=720412&x=99&y=99&z=0.5`), read on load, update with `history.replaceState`
+- [ ] **Day/night cycle** — tie sky tint and window lighting to the in-game clock
+- [ ] **Save state** — persist tracked nodes and discovered locations to `localStorage` (store those keys only, not the whole city)
+- [ ] **Open Graph image + title** — so shared links preview properly
+- [ ] **Screenshot button** — export the canvas as PNG
+
+### Gameplay / interactivity
+- [ ] Click vehicles and NPCs to open a small info card
+- [ ] Player-triggered events (district blackout, festival) with visible effects
+- [ ] Goals / missions using the existing discovery and tracking state (e.g. discover all 9 districts)
+- [ ] Terminal commands: `goto <district>`, `track <building>`
+- [ ] Seed picker to generate different cities
+
+### Visual
+- [ ] Neon reflections on roads during rain
+- [ ] District-specific palette tint per weather
+- [ ] Transit stations with NPCs boarding trains
+- [ ] Photo mode: hide HUD, free camera
+
+### Performance
+- [ ] Gate `drawStorefront` behind zoom > 0.75
+- [ ] Pause the render loop when the tab is hidden
+- [ ] Auto-lower internal resolution when FPS stays under 30
+- [ ] Honor `prefers-reduced-motion` (disable glitch and scanlines)
+
+### Deploy / polish
+- [ ] Favicon and PWA manifest
+- [ ] Mobile hint overlay ("pinch to zoom")
+- [ ] Loading state while `generateCity()` runs
+- [ ] Keep `node_modules`, `dist` and `*.tsbuildinfo` out of git
+
+### Bigger features
+- [ ] Multiplayer presence (other visitors' cursors) via a small WebSocket service
+- [ ] Interactive facility interiors with NPCs and floor plans
+
+## Deployment (Vercel)
+
+- Framework preset: Vite, Node 20+
+- Install: `npm ci` (keep `package-lock.json` in sync with `package.json`)
+- Build: `npm run build`, output: `dist`
+- Optional `vercel.json` for SPA rewrite and asset caching
+- Windows note: if PowerShell blocks `npm`, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` or use `npm.cmd`
