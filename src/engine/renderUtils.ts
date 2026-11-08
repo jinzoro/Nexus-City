@@ -1,4 +1,4 @@
-import type { Building, CityData, CityEvent, OverlayMode } from '../types'
+import type { Building, CityData, CityEvent, DistrictId, OverlayMode, ViewWeather } from '../types'
 import { TILE_H, TILE_W } from '../data/city'
 
 export type Pt = [number, number]
@@ -19,6 +19,12 @@ export interface View {
   city: CityData
   photoMode?: boolean
   scanMode?: boolean
+  /** 0 = deep night, 1 = full artificial noon. Drives window glow + light pass. */
+  daylight: number
+  /** Weather presentation: rain streaks, haze tint or festival bloom. */
+  weather: ViewWeather
+  /** District under the camera centre, for atmosphere tinting. */
+  district: DistrictId
 }
 
 export function clamp(v: number, min: number, max: number) {

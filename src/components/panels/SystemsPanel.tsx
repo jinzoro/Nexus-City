@@ -27,8 +27,6 @@ export function SystemsPanel() {
   const setOverlay = useCityStore((s) => s.setOverlay)
   const audioEnabled = useCityStore((s) => s.audioEnabled)
   const toggleAudio = useCityStore((s) => s.toggleAudio)
-  const scanlines = useCityStore((s) => s.scanlines)
-  const toggleScanlines = useCityStore((s) => s.toggleScanlines)
   const events = useCityStore((s) => s.events)
   const quality = useCityStore((s) => s.quality)
   const setQuality = useCityStore((s) => s.setQuality)
@@ -55,8 +53,7 @@ export function SystemsPanel() {
     >
       <div className="systems-grid">
         <div className="systems-column">
-          <SectionLabel>CITY LAYERS</SectionLabel>
-          <div className="systems-overlays">
+          <SectionLabel>CITY LAYERS</SectionLabel>          <div className="systems-overlays">
             {OVERLAYS.map((layer) => (
               <button
                 key={layer.id}
@@ -81,14 +78,6 @@ export function SystemsPanel() {
               <span>
                 <strong>AMBIENT AUDIO</strong>
                 <small>{audioEnabled ? 'CITY FEED ACTIVE' : 'MUTED BY DEFAULT'}</small>
-              </span>
-              <i className="toggle-switch" />
-            </button>
-            <button className={`toggle-row ${scanlines ? 'toggle-row--on' : ''}`} onClick={toggleScanlines}>
-              <Icon name="scan" size={15} />
-              <span>
-                <strong>CRT SCANLINES</strong>
-                <small>{scanlines ? 'SIGNAL TEXTURE ON' : 'CLEAN OUTPUT'}</small>
               </span>
               <i className="toggle-switch" />
             </button>

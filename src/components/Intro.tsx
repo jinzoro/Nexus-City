@@ -12,7 +12,7 @@ const BOOT_LINES = [
   'OPERATOR ACCESS CHANNEL OPEN',
 ]
 
-export function Intro({ city, onEnter }: { city: CityData; onEnter: () => void }) {
+export function Intro({ city, onEnter }: { city: CityData | null; onEnter: () => void }) {
   const [line, setLine] = useState(0)
   const [ready, setReady] = useState(false)
 
@@ -21,20 +21,21 @@ export function Intro({ city, onEnter }: { city: CityData; onEnter: () => void }
       const timer = window.setTimeout(() => setLine((v) => v + 1), 210)
       return () => window.clearTimeout(timer)
     }
+    if (!city) return
     const timer = window.setTimeout(() => setReady(true), 280)
     return () => window.clearTimeout(timer)
-  }, [line])
+  }, [line, city])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (ready && (event.key === 'Enter' || event.key === ' ')) {
+      if (ready && city && (event.key === 'Enter' || event.key === ' ')) {
         event.preventDefault()
         onEnter()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [ready, onEnter])
+  }, [ready, city, onEnter])
 
   return (
     <div className="intro">
@@ -66,20 +67,33 @@ export function Intro({ city, onEnter }: { city: CityData; onEnter: () => void }
               <span className="intro__ok">OK</span>
             </div>
           ))}
-          {line < BOOT_LINES.length ? <span className="intro__cursor" /> : null}
+          {!city && line >= BOOT_LINES.length ? (
+            <div className="intro__line intro__line--wait">
+              <span className="intro__line-time">[SYS]</span>
+              <span>COMPILING CAVERN TOPOLOGY — SEED LOCK</span>
+            </div>
+          ) : null}
+          {city && line >= BOOT_LINES.length ? (
+            <div className="intro__line">
+              <span className="intro__line-time">[SYS]</span>
+              <span>CAVERN COMPILED · SEED {city.seed}</span>
+              <span className="intro__ok">OK</span>
+            </div>
+          ) : null}
+          {line < BOOT_LINES.length || !city ? <span className="intro__cursor" /> : null}
         </div>
 
         <div className="intro__stats">
           <div>
-            <strong>{city.districts.length}</strong>
+            <strong>{city ? city.districts.length : '—'}</strong>
             <span>DISTRICTS</span>
           </div>
           <div>
-            <strong>{formatNumber(city.buildings.length)}</strong>
+            <strong>{city ? formatNumber(city.buildings.length) : '—'}</strong>
             <span>STRUCTURES</span>
           </div>
           <div>
-            <strong>{formatNumber(city.vehicles.length + city.pedestrians.length)}</strong>
+            <strong>{city ? formatNumber(city.vehicles.length + city.pedestrians.length) : '—'}</strong>
             <span>LIVE ENTITIES</span>
           </div>
           <div>
@@ -88,9 +102,13 @@ export function Intro({ city, onEnter }: { city: CityData; onEnter: () => void }
           </div>
         </div>
 
-        <button className={`intro__enter ${ready ? 'intro__enter--ready' : ''}`} onClick={onEnter} disabled={!ready}>
+        <button
+          className={`intro__enter ${ready ? 'intro__enter--ready' : ''}`}
+          onClick={onEnter}
+          disabled={!ready || !city}
+        >
           <span className="intro__enter-key">ENTER</span>
-          <span>INITIALIZE CITY INTERFACE</span>
+          <span>{city ? 'INITIALIZE CITY INTERFACE' : 'COMPILING…'}</span>
           <span className="intro__enter-arrow">→</span>
         </button>
 

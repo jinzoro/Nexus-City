@@ -1,10 +1,11 @@
 import type { CSSProperties } from 'react'
 import { useCityStore } from '../../state/useCityStore'
-import { FACTIONS, buildCodex } from '../../data/world'
+import { FACTIONS, buildCodex, GOALS } from '../../data/world'
 import { getDistrict } from '../../data/city'
 import { formatNumber, Meter, SectionLabel } from '../ui'
 import { Icon } from '../Icons'
 import { PanelShell } from './PanelShell'
+import { AccountSection } from '../AccountSection'
 
 function PixelAvatar() {
   return (
@@ -43,6 +44,9 @@ export function ProfilePanel() {
   const codexFound = useCityStore((s) => s.codexFound)
   const discoverCodex = useCityStore((s) => s.discoverCodex)
   const setSelected = useCityStore((s) => s.setSelected)
+  const goalsDone = useCityStore((s) => s.goalsDone)
+  const bookmarks = useCityStore((s) => s.bookmarks)
+  const festivalsThrown = useCityStore((s) => s.festivalsThrown)
 
   if (!city) return null
   const landmarkIds = city.landmarks.map((b) => b.id)
@@ -89,6 +93,41 @@ export function ProfilePanel() {
         </div>
 
         <div className="profile-main">
+          <SectionLabel
+            action={<span className="codex-count">{goalsDone.length}/{GOALS.length} CLEARED</span>}
+          >
+            CITY GOALS
+          </SectionLabel>
+          <div className="goal-grid">
+            {GOALS.map((goal) => {
+              const value = goal.progress({
+                visitedDistricts: visited,
+                tracked,
+                discovered,
+                codexFound,
+                bookmarks,
+                festivalsThrown,
+              })
+              const done = goalsDone.includes(goal.id)
+              const pct = Math.min(100, (value / goal.target) * 100)
+              return (
+                <div key={goal.id} className={`goal-row ${done ? 'goal-row--done' : ''}`}>
+                  <div className="goal-row__head">
+                    <span className="goal-row__tick">{done ? '✓' : '○'}</span>
+                    <strong>{goal.title}</strong>
+                    <span className="goal-row__count">
+                      {Math.min(value, goal.target)}/{goal.target}
+                    </span>
+                  </div>
+                  <div className="goal-row__track">
+                    <i style={{ width: `${pct}%` }} />
+                  </div>
+                  <p>{goal.detail}</p>
+                </div>
+              )
+            })}
+          </div>
+
           <SectionLabel>LANDMARK SURVEY</SectionLabel>
           <div className="survey">
             <div className="survey__head">
@@ -207,6 +246,8 @@ export function ProfilePanel() {
               )
             })}
           </div>
+
+          <AccountSection />
         </div>
       </div>
     </PanelShell>

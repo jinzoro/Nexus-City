@@ -7,6 +7,7 @@ import type {
   CityEvent,
   DistrictId,
   FactionId,
+  GoalContext,
   NewsItem,
   OverlayMode,
   QualityLevel,
@@ -14,7 +15,8 @@ import type {
 } from '../types'
 import type { CityEngine } from '../engine/CityEngine'
 import { ambient } from '../audio/ambient'
-import { defaultBookmarks } from '../data/world'
+import { defaultBookmarks, GOALS, createNewsItem } from '../data/world'
+import { createEventForType } from '../data/events'
 
 export type PanelId = 'map' | 'sectors' | 'transit' | 'systems' | 'messages' | 'profile' | null
 
@@ -29,6 +31,7 @@ interface PersistedProgress {
   onboardingDone: boolean
   factionRep: Record<FactionId, number>
   codexFound: string[]
+  goalsDone: string[]
 }
 
 function readProgress(): Partial<PersistedProgress> {
@@ -60,6 +63,7 @@ function persistSoon() {
         onboardingDone: state.onboardingDone,
         factionRep: state.factionRep,
         codexFound: state.codexFound,
+        goalsDone: state.goalsDone,
       }
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
     } catch {
@@ -197,9 +201,6 @@ interface CityStore {
   audioEnabled: boolean
   toggleAudio: () => Promise<void>
 
-  scanlines: boolean
-  toggleScanlines: () => void
-
   introDone: boolean
   finishIntro: () => void
 
@@ -229,6 +230,21 @@ interface CityStore {
   setClock: (clock: string) => void
   fps: number
   setFps: (fps: number) => void
+
+  goalsDone: string[]
+  checkGoals: () => void
+  festivalsThrown: number
+
+  dispatchEvent: (event: CityEvent) => void
+  triggerEvent: (type: CityEvent['type'], district?: DistrictId) => CityEvent
+}
+
+/** Map an event type onto the renderer weather presentation. */
+export function weatherKindFor(type: CityEvent['type']) {
+  if (type === 'rain') return 'rain' as const
+  if (type === 'weather') return 'haze' as const
+  if (type === 'festival') return 'festival' as const
+  return 'clear' as const
 }
 
 const nowTime = () => {
@@ -375,6 +391,7 @@ export const useCityStore = create<CityStore>()((set, get) => ({
     set({ bookmarks: [...get().bookmarks, { ...bookmark, id }].slice(-12) })
     persistSoon()
     get().pushToast({ title: 'VANTAGE SAVED', message: `${bookmark.name} pinned to the camera rail.`, severity: 'info' })
+    get().checkGoals()
   },
   removeBookmark: (id) => {
     set({ bookmarks: get().bookmarks.filter((b) => b.id !== id) })
@@ -393,6 +410,7 @@ export const useCityStore = create<CityStore>()((set, get) => ({
     if (get().codexFound.includes(id)) return
     set({ codexFound: [...get().codexFound, id] })
     persistSoon()
+    get().checkGoals()
   },
 
   news: SEED_NEWS,
@@ -440,9 +458,6 @@ export const useCityStore = create<CityStore>()((set, get) => ({
     }
   },
 
-  scanlines: true,
-  toggleScanlines: () => set({ scanlines: !get().scanlines }),
-
   introDone: false,
   finishIntro: () => set({ introDone: true }),
 
@@ -463,7 +478,25 @@ export const useCityStore = create<CityStore>()((set, get) => ({
       severity: event.severity,
     })
   },
-  removeEvent: (id) => set({ events: get().events.filter((e) => e.id !== id) }),
+  removeEvent: (id) => {
+    const removed = get().events.find((e) => e.id === id)
+    const remaining = get().events.filter((e) => e.id !== id)
+    set({ events: remaining })
+    const next = remaining[remaining.length - 1] ?? null
+    get().engine?.setEvent(next)
+    if (removed) {
+      get().addLog({
+        title: 'EVENT CLEARED',
+        message: `${removed.title} resolved. Civic systems returning to nominal.`,
+        severity: 'info',
+        district: removed.district,
+      })
+    }
+    if (!remaining.some((e) => e.type === 'rain' || e.type === 'weather' || e.type === 'festival')) {
+      get().setWeather({ label: 'ARTIFICIAL DAWN', detail: 'CEILING LIGHTS / LOW HAZE', humidity: 71, wind: 3.2 })
+      get().engine?.setEnvironment({ weather: 'clear' })
+    }
+  },
   addLog: (entry) =>
     set({
       eventLog: [
@@ -501,12 +534,14 @@ export const useCityStore = create<CityStore>()((set, get) => ({
     if (get().discovered.includes(id)) return
     set({ discovered: [...get().discovered, id] })
     persistSoon()
+    get().checkGoals()
   },
   visitedDistricts: savedProgress.visitedDistricts ?? ['central'],
   visitDistrict: (id) => {
     if (get().visitedDistricts.includes(id)) return
     set({ visitedDistricts: [...get().visitedDistricts, id] })
     persistSoon()
+    get().checkGoals()
   },
   tracked: savedProgress.tracked ?? [],
   toggleTracked: (id) => {
@@ -519,6 +554,7 @@ export const useCityStore = create<CityStore>()((set, get) => ({
       get().pushToast({ title: 'NODE TRACKED', message: 'Telemetry will remain pinned to this structure.', severity: 'info' })
     }
     persistSoon()
+    get().checkGoals()
   },
 
   stats: initialStats,
@@ -529,4 +565,58 @@ export const useCityStore = create<CityStore>()((set, get) => ({
   setClock: (clock) => set({ clock }),
   fps: 60,
   setFps: (fps) => set({ fps }),
+
+  goalsDone: savedProgress.goalsDone ?? [],
+  festivalsThrown: 0,
+  checkGoals: () => {
+    const s = get()
+    const ctx: GoalContext = {
+      visitedDistricts: s.visitedDistricts,
+      tracked: s.tracked,
+      discovered: s.discovered,
+      codexFound: s.codexFound,
+      bookmarks: s.bookmarks,
+      festivalsThrown: s.festivalsThrown,
+    }
+    const newly = GOALS.filter((g) => !s.goalsDone.includes(g.id) && g.progress(ctx) >= g.target)
+    if (!newly.length) return
+    set({ goalsDone: [...s.goalsDone, ...newly.map((g) => g.id)] })
+    persistSoon()
+    for (const goal of newly) {
+      s.pushToast({ title: 'GOAL COMPLETE', message: `${goal.title} — ${goal.detail}`, severity: 'info' })
+    }
+  },
+
+  dispatchEvent: (event) => {
+    const state = get()
+    state.addEvent(event)
+    state.engine?.setEvent(event)
+    state.pushNews(createNewsItem(state.city, event.district))
+    if (event.type === 'construction' || event.type === 'power') state.adjustRep('guild', 2)
+    if (event.type === 'market') state.adjustRep('kuro', 3)
+    if (event.type === 'network') state.adjustRep('cortex', 2)
+    if (event.type === 'rain' || event.type === 'weather') state.adjustRep('verdant', 2)
+    if (event.type === 'festival') {
+      state.adjustRep('civic', 1)
+      set({ festivalsThrown: state.festivalsThrown + 1 })
+    }
+    const weather = weatherKindFor(event.type)
+    if (event.type === 'rain') {
+      state.setWeather({ label: 'ACID DRIZZLE', detail: 'CEILING VENTS / LOW VISIBILITY', humidity: 94, wind: 6.4 })
+    } else if (event.type === 'weather') {
+      state.setWeather({ label: 'PARTICULATE HAZE', detail: 'VISIBILITY REDUCED / OUTER RING', humidity: 79, wind: 4.1 })
+    } else if (event.type === 'festival') {
+      state.setWeather({ label: 'NEON FESTIVAL', detail: 'HOLO PARADE / HIGH AUDIO', humidity: 66, wind: 2.4 })
+    }
+    state.engine?.setEnvironment({ weather })
+    state.checkGoals()
+  },
+
+  triggerEvent: (type, district) => {
+    const state = get()
+    const event = createEventForType(type, district ?? state.camera.district)
+    state.dispatchEvent(event)
+    window.setTimeout(() => get().removeEvent(event.id), event.duration)
+    return event
+  },
 }))

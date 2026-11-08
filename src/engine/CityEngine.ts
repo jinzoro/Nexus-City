@@ -8,6 +8,7 @@ import type {
   OverlayMode,
   QualityLevel,
   SelectedEntity,
+  ViewWeather,
 } from '../types'
 import { TILE_H, TILE_W, districtForCell, getDistrict } from '../data/city'
 import { trainEntity, vehicleEntity, pedestrianEntity } from '../data/world'
@@ -28,6 +29,9 @@ import {
   drawTrains,
   drawVehicles,
   drawWeather,
+  drawDayNight,
+  drawDistrictAtmosphere,
+  drawStationCrowds,
 } from './dynamicRenderer'
 import { renderForeground, renderGround } from './groundRenderer'
 import { type Camera, type View, clamp, getBuildingBounds, isBoundsVisible, isPointInBounds, project } from './renderUtils'
@@ -38,6 +42,7 @@ interface EngineCallbacks {
   onSelectEntity?: (entity: SelectedEntity | null) => void
   onFollowChange?: (following: boolean) => void
   onCamera?: (info: CameraInfo) => void
+  onAutoQuality?: (pixelScale: number) => void
 }
 
 type FollowTarget = { kind: EntityKind; id: string } | null
@@ -100,11 +105,18 @@ export class CityEngine {
   private scanMode = false
   private quality: QualityLevel = 'auto'
   private pixelScale = 1.7
+  /** Multiplier applied on top of the AUTO profile when the FPS watchdog fires (up to ~2.6). */
+  private autoScale = 1
+  private fpsWatch = { frames: 0, windowStart: 0, lowSeconds: 0, lastShot: 0 }
+  private daylight = 1
+  private weather: ViewWeather = 'clear'
   private selectedEntity: { kind: EntityKind; id: string } | null = null
   private followTarget: FollowTarget = null
   private pedMap: Map<string, import('../types').Pedestrian>
   private vehicleMap: Map<string, import('../types').Vehicle>
   private trainMap: Map<string, import('../types').Train>
+  private dwellMap = new Map<string, number>()
+  private stationMap = new Map<string, number[]>()
   private pointers = new Map<number, PointerInfo>()
   private pinch: { dist: number; midX: number; midY: number; camX: number; camY: number; zoom: number } | null = null
   private drag: { startX: number; startY: number; camX: number; camY: number; moved: boolean } | null = null
@@ -128,6 +140,11 @@ export class CityEngine {
     this.pedMap = new Map(city.pedestrians.map((n) => [n.id, n]))
     this.vehicleMap = new Map(city.vehicles.map((v) => [v.id, v]))
     this.trainMap = new Map(city.trains.map((t) => [t.id, t]))
+    for (const st of city.stations) {
+      const list = this.stationMap.get(st.lineId) ?? []
+      list.push(st.pos)
+      this.stationMap.set(st.lineId, list)
+    }
     this.groundCanvas = document.createElement('canvas')
     this.groundCtx = this.groundCanvas.getContext('2d') as CanvasRenderingContext2D
     this.cityCanvas = document.createElement('canvas')
@@ -145,6 +162,9 @@ export class CityEngine {
       city: this.city,
       photoMode: false,
       scanMode: false,
+      daylight: this.daylight,
+      weather: this.weather,
+      district: 'central',
     }
     this.ctx.imageSmoothingEnabled = false
     this.groundCtx.imageSmoothingEnabled = false
@@ -153,6 +173,8 @@ export class CityEngine {
     this.resize()
     this.bind()
     this.last = performance.now()
+    this.fpsWatch = { frames: 0, windowStart: this.last, lowSeconds: 0, lastShot: 0 }
+    document.addEventListener('visibilitychange', this.onVisibility)
     this.raf = requestAnimationFrame(this.tick)
   }
 
@@ -170,6 +192,7 @@ export class CityEngine {
   destroy() {
     this.destroyed = true
     cancelAnimationFrame(this.raf)
+    document.removeEventListener('visibilitychange', this.onVisibility)
     this.canvas.removeEventListener('wheel', this.onWheel)
     this.canvas.removeEventListener('pointerdown', this.onPointerDown)
     this.canvas.removeEventListener('pointermove', this.onPointerMove)
@@ -184,7 +207,20 @@ export class CityEngine {
     if (this.quality === 'high') return cssW < 720 ? 1.2 : 1.35
     if (this.quality === 'performance') return cssW < 720 ? 1.7 : 2.4
     if (this.quality === 'balanced') return cssW < 720 ? 1.35 : 1.85
-    return cssW < 720 ? 1.2 : 1.7
+    return (cssW < 720 ? 1.2 : 1.7) * this.autoScale
+  }
+
+  private onVisibility = () => {
+    if (this.destroyed) return
+    if (document.hidden) {
+      cancelAnimationFrame(this.raf)
+      this.raf = 0
+    } else if (!this.raf) {
+      // Re-anchor the clock so the first resumed frame doesn't produce a huge dt.
+      this.last = performance.now()
+      this.fpsWatch.windowStart = this.last
+      this.raf = requestAnimationFrame(this.tick)
+    }
   }
 
   resize() {
@@ -218,7 +254,15 @@ export class CityEngine {
     this.last = now
     this.time = now / 1000
     this.view.time = this.time
+    this.runFpsWatch(now)
     this.update(dt)
+    // Sync the atmosphere section of the view before any layer rendering.
+    this.view.daylight = this.daylight
+    this.view.weather = this.weather
+    this.view.district = districtForCell(
+      clamp(this.camera.x / TILE_W + this.camera.y / TILE_H, 0, this.city.size),
+      clamp(this.camera.y / TILE_H - this.camera.x / TILE_W, 0, this.city.size),
+    )
     if (this.dirty) {
       this.renderStaticLayers()
       this.dirty = false
@@ -230,6 +274,7 @@ export class CityEngine {
     drawVehicles(ctx, this.view)
     drawPedestrians(ctx, this.view)
     ctx.drawImage(this.cityCanvas, 0, 0)
+    drawStationCrowds(ctx, this.view)
     drawTrains(ctx, this.view)
     drawAircraft(ctx, this.view)
     drawDrones(ctx, this.view)
@@ -248,10 +293,39 @@ export class CityEngine {
     }
     ctx.drawImage(this.fgCanvas, 0, 0)
     drawCeilingDynamic(ctx, this.view)
-    drawWeather(ctx, this.view)
+    // day/night, district atmosphere and weather tints removed for crisp pixel output
+    // drawDayNight(ctx, this.view)
+    // drawDistrictAtmosphere(ctx, this.view)
+    // drawWeather(ctx, this.view)
     if (this.scanMode) drawScanOverlay(ctx, this.view)
     this.emitCameraInfo()
     this.raf = requestAnimationFrame(this.tick)
+  }
+
+  /** Auto-quality watchdog: if FPS sits under 30 for ~4s, degrade the buffer. */
+  private runFpsWatch(now: number) {
+    const watch = this.fpsWatch
+    watch.frames += 1
+    if (now - watch.windowStart < 1000) return
+    const fps = (watch.frames * 1000) / (now - watch.windowStart)
+    watch.frames = 0
+    watch.windowStart = now
+    if (document.hidden) return
+    if (fps < 30) {
+      watch.lowSeconds += 1
+      if (watch.lowSeconds >= 4 && now - watch.lastShot > 6000) {
+        watch.lastShot = now
+        watch.lowSeconds = 0
+        const next = Math.min(2.6 / 1.7, this.autoScale * 1.3)
+        if (next > this.autoScale + 0.01) {
+          this.autoScale = next
+          this.resize()
+          this.callbacks.onAutoQuality?.(this.pixelScale)
+        }
+      }
+    } else {
+      watch.lowSeconds = 0
+    }
   }
 
   private update(dt: number) {
@@ -317,12 +391,44 @@ export class CityEngine {
     }
     for (const train of this.city.trains) {
       if (transitStopped && train.id.endsWith('0')) continue
-      train.pos += train.speed * train.dir * dt
       const rail = this.city.rails.find((r) => r.id === train.lineId)
       if (!rail) continue
+      switch (this.trainDwell(train)) {
+        case 'running':
+          train.pos += train.speed * train.dir * dt
+          break
+        case 'boarding':
+          continue
+        case 'ending':
+          break
+      }
       if (train.pos < rail.from - 10) train.pos = rail.to + 10
       if (train.pos > rail.to + 10) train.pos = rail.from - 10
     }
+  }
+
+  /** Trains stop at their line's stations for a few seconds to board NPCs. */
+  private trainDwell(train: import('../types').Train): 'running' | 'boarding' | 'ending' {
+    const until = this.dwellMap.get(train.id)
+    if (until !== undefined) {
+      if (this.time < until) {
+        train.stopped = true
+        return 'boarding'
+      }
+      this.dwellMap.delete(train.id)
+      train.stopped = false
+      return 'ending'
+    }
+    const stations = this.stationMap.get(train.lineId)
+    if (!stations) return 'running'
+    for (const pos of stations) {
+      if (Math.abs(train.pos - pos) < Math.max(0.9, train.speed * 0.12)) {
+        this.dwellMap.set(train.id, this.time + 5.2)
+        train.stopped = true
+        return 'boarding'
+      }
+    }
+    return 'running'
   }
 
   private renderStaticLayers() {
@@ -665,7 +771,22 @@ export class CityEngine {
 
   setQuality(quality: QualityLevel) {
     this.quality = quality
+    this.autoScale = 1
     this.resize()
+  }
+
+  /** Hand the engine the current day-phase and weather presentation. */
+  setEnvironment(env: { daylight?: number; weather?: ViewWeather }) {
+    let changed = false
+    if (env.daylight !== undefined && Math.abs(env.daylight - this.daylight) > 0.02) {
+      this.daylight = env.daylight
+      changed = true
+    }
+    if (env.weather !== undefined && env.weather !== this.weather) {
+      this.weather = env.weather
+      changed = true
+    }
+    if (changed) this.dirty = true
   }
 
   captureFrame() {

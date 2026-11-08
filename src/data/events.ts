@@ -93,6 +93,13 @@ export function createRandomEvent(activeTypes: Set<string> = new Set()): CityEve
   const district: DistrictId = template.district
     ? DISTRICTS[Math.floor(Math.random() * DISTRICTS.length)].id
     : 'central'
+  return createEventForType(template.type, district)
+}
+
+/** Build a deterministic event of a chosen type (used by player-triggered actions). */
+export function createEventForType(type: CityEvent['type'], preferredDistrict?: DistrictId): CityEvent {
+  const template = TEMPLATES.find((t) => t.type === type) ?? TEMPLATES[0]
+  const district: DistrictId = template.district ? (preferredDistrict ?? 'central') : 'central'
   const districtName = getDistrict(district).name
   const [min, max] = template.duration
   const duration = Math.round((min + Math.random() * (max - min)) * 1000)

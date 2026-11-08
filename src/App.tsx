@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
+import type { CityData } from './types'
 import { CityEngine } from './engine/CityEngine'
-import { generateCity, getDistrict } from './data/city'
+import { generateCity, getDistrict, CITY_SEED_DEFAULT } from './data/city'
 import { createRandomEvent } from './data/events'
 import { ambient } from './audio/ambient'
 import { useCityStore } from './state/useCityStore'
+import { useSocialStore } from './social/useSocialStore'
+import { AccountGate } from './components/AccountGate'
 import { TopBar } from './components/TopBar'
 import { BottomNav } from './components/BottomNav'
 import { SideControls } from './components/SideControls'
@@ -20,22 +23,47 @@ import { EntityCard } from './components/EntityCard'
 import { PhotoModeBar } from './components/PhotoModeBar'
 import { NewsTicker } from './components/NewsTicker'
 import { Onboarding } from './components/Onboarding'
+import { MobileHint } from './components/MobileHint'
 import { Icon } from './components/Icons'
 import { createNewsItem } from './data/world'
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
 
-const WEATHER_DEFAULT = {
-  label: 'ARTIFICIAL DAWN',
-  detail: 'CEILING LIGHTS / LOW HAZE',
-  humidity: 71,
-  wind: 3.2,
+/** Map the wall-clock hour onto the cavern's artificial day cycle. */
+function daylightForClock(now: Date) {
+  const hour = now.getHours() + now.getMinutes() / 60
+  // Peaks at 13:00, trough at 01:00 — the cavern never goes fully black.
+  const cycle = Math.cos(((hour - 13) / 24) * Math.PI * 2)
+  return clamp(0.12 + ((cycle + 1) / 2) * 0.88, 0.12, 1)
+}
+
+/** Convert a store clock ("HH:MM:SS") onto today's date for the cycle math. */
+function clockToDate(clock: string) {
+  const [h, m, s] = clock.split(':').map(Number)
+  const d = new Date()
+  d.setHours(Number.isFinite(h) ? h : 0, Number.isFinite(m) ? m : 0, Number.isFinite(s) ? s : 0, 0)
+  return d
+}
+
+/** Weather label → renderer presentation. */
+function weatherKindForState(label: string) {
+  if (label.includes('DRIZZLE')) return 'rain' as const
+  if (label.includes('HAZE')) return 'haze' as const
+  if (label.includes('FESTIVAL')) return 'festival' as const
+  return 'clear' as const
+}
+
+/** Day-cycle phases for the HUD label. */
+function phaseLabel(daylight: number) {
+  if (daylight >= 0.8) return 'ARTIFICIAL NOON'
+  if (daylight >= 0.55) return 'SHIFT CYCLE'
+  if (daylight >= 0.3) return 'CONDENSER DUSK'
+  return 'DEEP NIGHT CYCLE'
 }
 
 export default function App() {
-  const [city] = useState(() => generateCity())
+  const [city, setCity] = useState<CityData | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const scanlines = useCityStore((s) => s.scanlines)
   const introDone = useCityStore((s) => s.introDone)
   const finishIntro = useCityStore((s) => s.finishIntro)
   const selectedId = useCityStore((s) => s.selectedId)
@@ -47,17 +75,54 @@ export default function App() {
   const audioEnabled = useCityStore((s) => s.audioEnabled)
   const photoMode = useCityStore((s) => s.photoMode)
   const scanMode = useCityStore((s) => s.scanMode)
+  const weather = useCityStore((s) => s.weather)
+  const clock = useCityStore((s) => s.clock)
   const quality = useCityStore((s) => s.quality)
   const onboardingDone = useCityStore((s) => s.onboardingDone)
 
+  const socialEnabled = useSocialStore((s) => s.enabled)
+  const socialStatus = useSocialStore((s) => s.status)
+  const socialProfile = useSocialStore((s) => s.profile)
+  const socialAuthError = useSocialStore((s) => s.authError)
+  const socialSignIn = useSocialStore((s) => s.signIn)
+  const socialSignUp = useSocialStore((s) => s.signUp)
+  const socialSignOut = useSocialStore((s) => s.signOut)
+  const socialClearAuthError = useSocialStore((s) => s.clearAuthError)
+  const social = {
+    enabled: socialEnabled,
+    status: socialStatus,
+    profile: socialProfile,
+    authError: socialAuthError,
+    signIn: socialSignIn,
+    signUp: socialSignUp,
+    signOut: socialSignOut,
+    clearAuthError: socialClearAuthError,
+  }
+
+  // Init social on mount
   useEffect(() => {
-    useCityStore.getState().setCity(city)
+    if (!social.enabled) return
+    useSocialStore.getState().init()
+  }, [social.enabled])
+
+  useEffect(() => {
+    if (city) useCityStore.getState().setCity(city)
   }, [city])
+
+  // Engine lifecycle — only after auth
+  useEffect(() => {
+    if (!social.enabled || social.status !== 'online' || !social.profile) {
+      setCity(null)
+      return
+    }
+    const handle = window.setTimeout(() => setCity(generateCity(CITY_SEED_DEFAULT)), 460)
+    return () => window.clearTimeout(handle)
+  }, [social.enabled, social.status, social.profile])
 
   // Engine lifecycle
   useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas) return
+    if (!canvas || !city) return
     const engine = new CityEngine(canvas, city, {
       onHover: (building, x, y) => useCityStore.getState().setHover(building, x, y),
       onSelect: (building) => useCityStore.getState().setSelected(building),
@@ -71,6 +136,13 @@ export default function App() {
         const state = useCityStore.getState()
         state.setCamera(info)
         state.visitDistrict(info.district)
+      },
+      onAutoQuality: (scale) => {
+        useCityStore.getState().pushToast({
+          title: 'RENDER AUTO-TUNE',
+          message: `Frame rate dipped — internal buffer reduced to 1:${scale.toFixed(1)}.`,
+          severity: 'info',
+        })
       },
     })
     useCityStore.getState().setEngine(engine)
@@ -149,18 +221,30 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHashChange)
   }, [])
 
-  // Clock
+  // Clock — drives the in-game day/night cycle + phase label.
   useEffect(() => {
     const update = () => {
       const d = new Date()
-      useCityStore.getState().setClock(
-        `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`,
+      const state = useCityStore.getState()
+      state.setClock(
+        `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(
+          d.getSeconds(),
+        ).padStart(2, '0')}`,
       )
+      // daylight no longer fed to engine for raw pixel output
+      // const daylight = daylightForClock(d)
+      // state.engine?.setEnvironment({ daylight })
     }
     update()
     const timer = window.setInterval(update, 1000)
     return () => window.clearInterval(timer)
   }, [])
+
+  // Weather presentation follows the store's weather label.
+  useEffect(() => {
+    // weather no longer fed to engine for raw pixel output
+    // useCityStore.getState().engine?.setEnvironment({ weather: weatherKindForState(weather.label) })
+  }, [weather.label])
 
   // Ambient audio follows the camera district
   useEffect(() => {
@@ -206,7 +290,8 @@ export default function App() {
     return () => cancelAnimationFrame(raf)
   }, [])
 
-  // Event simulation
+  // Event simulation — the store centralizes lifecycle (engine sync, weather,
+  // reputation, news, goals); App only schedules the random spawning/cleanup.
   useEffect(() => {
     if (!introDone) return
     let disposed = false
@@ -217,39 +302,9 @@ export default function App() {
       const state = useCityStore.getState()
       const active = new Set(state.events.map((e) => e.type))
       const event = createRandomEvent(active)
-      state.addEvent(event)
-      state.engine?.setEvent(event)
-      state.pushNews(createNewsItem(state.city, event.district))
-      if (event.type === 'construction' || event.type === 'power') state.adjustRep('guild', 2)
-      if (event.type === 'market') state.adjustRep('kuro', 3)
-      if (event.type === 'network') state.adjustRep('cortex', 2)
-      if (event.type === 'rain' || event.type === 'weather') state.adjustRep('verdant', 2)
-      if (event.type === 'festival') state.adjustRep('civic', 1)
-
-      if (event.type === 'rain') {
-        state.setWeather({ label: 'ACID DRIZZLE', detail: 'CEILING VENTS / LOW VISIBILITY', humidity: 94, wind: 6.4 })
-      } else if (event.type === 'weather') {
-        state.setWeather({ label: 'PARTICULATE HAZE', detail: 'VISIBILITY REDUCED / OUTER RING', humidity: 79, wind: 4.1 })
-      } else if (event.type === 'festival') {
-        state.setWeather({ label: 'NEON FESTIVAL', detail: 'HOLO PARADE / HIGH AUDIO', humidity: 66, wind: 2.4 })
-      }
-
+      state.dispatchEvent(event)
       const timer = window.setTimeout(() => {
-        if (disposed) return
-        const current = useCityStore.getState()
-        current.removeEvent(event.id)
-        current.addLog({
-          title: 'EVENT CLEARED',
-          message: `${event.title} resolved. Civic systems returning to nominal.`,
-          severity: 'info',
-          district: event.district,
-        })
-        const after = useCityStore.getState()
-        const remaining = after.events
-        after.engine?.setEvent(remaining.length ? remaining[remaining.length - 1] : null)
-        if (!remaining.some((e) => e.type === 'rain' || e.type === 'weather' || e.type === 'festival')) {
-          after.setWeather(WEATHER_DEFAULT)
-        }
+        if (!disposed) useCityStore.getState().removeEvent(event.id)
       }, event.duration)
       timers.add(timer)
     }
@@ -323,76 +378,93 @@ export default function App() {
   }, [])
 
   return (
-    <div
-      className={`app ${scanlines ? 'app--scanlines' : ''} ${selectedId ? 'app--selection' : ''} ${
-        selectedEntity ? 'app--entity' : ''
-      } ${activePanel ? 'app--panel' : ''} ${photoMode ? 'app--photo' : ''} ${scanMode ? 'app--scan' : ''}`}
-    >
-      <canvas ref={canvasRef} className="city-canvas" aria-label="NEXUS underground city" />
-
-      <div className="city-vignette" aria-hidden="true" />
-      <div className="city-glow" aria-hidden="true" />
-      {scanlines ? <div className="scanlines" aria-hidden="true" /> : null}
-
-      <div className="hud">
-        <TopBar />
-        <EventFeed />
-        <SideControls />
-
-        <div className="hud-minimap">
-          <div className="hud-minimap__head">
-            <span><span className="live-dot" /> CITY GRID</span>
-            <span>{Math.round(camera.zoom * 100)}%</span>
-          </div>
-          <Minimap size={152} />
-          <div className="hud-minimap__foot">
-            <span style={{ color: district.color }}>{district.code} // {district.name}</span>
-            <span>{Math.round(camera.cellX)}:{Math.round(camera.cellY)}</span>
+    <>
+      {!social.enabled || social.status !== 'online' || !social.profile ? (
+        <div className="login-gate" data-login>
+          <div className="login-gate__card">
+            <div className="login-gate__head">
+              <span className="login-gate__badge">NEXUS</span>
+              <h1>CITIZEN ACCESS</h1>
+            </div>
+            <p className="login-gate__tag">AUTHENTICATION REQUIRED TO ENTER THE CITY</p>
+            {!social.enabled ? (
+              <p className="login-gate__offline">
+                SOCIAL MESH OFFLINE — set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY to
+                enable sign-in.
+              </p>
+            ) : null}
+            <AccountGate social={social} error={social.authError} disabled={!social.enabled} />
+            <div className="login-gate__foot">NEXUS // UNDERGROUND MEGAPOLIS</div>
           </div>
         </div>
-
-        <div className="coord-rail">
-          <div className="coord-rail__row">
-            <span className="coord-rail__key">CAM</span>
-            <span>{Math.round(camera.x)} / {Math.round(camera.y)}</span>
+      ) : (
+        <div
+          className={`app ${selectedId ? 'app--selection' : ''} ${
+            selectedEntity ? 'app--entity' : ''
+          } ${activePanel ? 'app--panel' : ''} ${photoMode ? 'app--photo' : ''} ${scanMode ? 'app--scan' : ''}`}
+        >
+          <canvas ref={canvasRef} className="city-canvas" aria-label="NEXUS underground city" />
+          {/* cinematic overlays removed per owner request */}
+          <div className="hud">
+            <TopBar />
+            <EventFeed />
+            <SideControls />
+            <div className="hud-minimap">
+              <div className="hud-minimap__head">
+                <span><span className="live-dot" /> CITY GRID</span>
+                <span>{Math.round(camera.zoom * 100)}%</span>
+              </div>
+              <Minimap size={152} />
+              <div className="hud-minimap__foot">
+                <span style={{ color: district.color }}>{district.code} // {district.name}</span>
+                <span>{Math.round(camera.cellX)}:{Math.round(camera.cellY)}</span>
+              </div>
+            </div>
+            <div className="coord-rail">
+              <div className="coord-rail__row">
+                <span className="coord-rail__key">CAM</span>
+                <span>{Math.round(camera.x)} / {Math.round(camera.y)}</span>
+              </div>
+              <div className="coord-rail__row">
+                <span className="coord-rail__key">CELL</span>
+                <span>{Math.round(camera.cellX)}:{Math.round(camera.cellY)}</span>
+              </div>
+              <div className="coord-rail__row">
+                <span className="coord-rail__key">LEVEL</span>
+                <span style={{ color: district.color }}>{camera.level}</span>
+              </div>
+              <div className="coord-rail__row coord-rail__row--muted">
+                <span className="coord-rail__key">FPS</span>
+                <span className={fps >= 50 ? 'coord-rail__good' : fps >= 30 ? 'coord-rail__warn' : 'coord-rail__bad'}>{fps}</span>
+                <span className="coord-rail__sep">/</span>
+                <span>RENDER {Math.round(camera.zoom * 100)}%</span>
+              </div>
+              <div className="coord-rail__row coord-rail__row--muted">
+                <span className="coord-rail__key">CYCLE</span>
+                <span>{phaseLabel(daylightForClock(clockToDate(clock)))}</span>
+              </div>
+            </div>
+            <div className="hud-help">
+              <span><Icon name="search" size={10} /> CTRL+K SEARCH</span>
+              <span><Icon name="map" size={10} /> DRAG TO PAN</span>
+              <span><Icon name="target" size={10} /> SCROLL TO ZOOM</span>
+            </div>
+            <SelectionPanel />
+            <EntityCard />
+            <HoverTooltip />
+            <BottomNav />
+            <NewsTicker />
           </div>
-          <div className="coord-rail__row">
-            <span className="coord-rail__key">CELL</span>
-            <span>{Math.round(camera.cellX)}:{Math.round(camera.cellY)}</span>
-          </div>
-          <div className="coord-rail__row">
-            <span className="coord-rail__key">LEVEL</span>
-            <span style={{ color: district.color }}>{camera.level}</span>
-          </div>
-          <div className="coord-rail__row coord-rail__row--muted">
-            <span className="coord-rail__key">FPS</span>
-            <span className={fps >= 50 ? 'coord-rail__good' : fps >= 30 ? 'coord-rail__warn' : 'coord-rail__bad'}>{fps}</span>
-            <span className="coord-rail__sep">/</span>
-            <span>RENDER {Math.round(camera.zoom * 100)}%</span>
-          </div>
+          <Panels />
+          <FacilityView />
+          <SearchPalette />
+          <PhotoModeBar />
+          <Onboarding />
+          <ToastStack />
+          <MobileHint />
+          {!introDone ? <Intro city={city} onEnter={finishIntro} /> : null}
         </div>
-
-        <div className="hud-help">
-          <span><Icon name="search" size={10} /> CTRL+K SEARCH</span>
-          <span><Icon name="map" size={10} /> DRAG TO PAN</span>
-          <span><Icon name="target" size={10} /> SCROLL TO ZOOM</span>
-        </div>
-
-        <SelectionPanel />
-        <EntityCard />
-        <HoverTooltip />
-        <BottomNav />
-        <NewsTicker />
-      </div>
-
-      <Panels />
-      <FacilityView />
-      <SearchPalette />
-      <PhotoModeBar />
-      <Onboarding />
-      <ToastStack />
-
-      {!introDone ? <Intro city={city} onEnter={finishIntro} /> : null}
-    </div>
+      )}
+    </>
   )
 }

@@ -686,7 +686,7 @@ function rr(i: number, r: number) {
 
 export function drawWeather(ctx: CanvasRenderingContext2D, view: View) {
   const { width, height, time } = view
-  const rain = view.event?.type === 'rain'
+  const rain = view.weather === 'rain' || view.event?.type === 'rain'
   const count = rain ? 170 : 54
   ctx.save()
   ctx.globalCompositeOperation = 'lighter'
@@ -702,8 +702,8 @@ export function drawWeather(ctx: CanvasRenderingContext2D, view: View) {
     ctx.lineTo(x - len * 0.35, y + len)
     ctx.stroke()
   }
-  if (view.event?.type === 'festival') {
-    const district = view.event.district ? getDistrict(view.event.district) : null
+  if (view.weather === 'festival' || view.event?.type === 'festival') {
+    const district = view.event?.district ? getDistrict(view.event.district) : getDistrict(view.district)
     if (district) {
       const p = project(view, district.center.x, district.center.y)
       for (let i = 0; i < 60; i++) {
@@ -1194,4 +1194,167 @@ export function drawCeilingDynamic(ctx: CanvasRenderingContext2D, view: View) {
     ctx.fillRect(Math.round(x), Math.round(y), 2, 1)
   }
   ctx.restore()
+}
+
+/* ------------------------------------------------------------------ */
+/* Day / night cycle                                                   */
+/* ------------------------------------------------------------------ */
+
+export function drawDayNight(ctx: CanvasRenderingContext2D, view: View) {
+  const night = clamp(1 - view.daylight, 0, 1)
+  if (night <= 0.02) return
+  ctx.save()
+  const width = view.width
+  const height = view.height
+  // Dusk warm pass through the condenser ducts (peaks mid-transition).
+  const dusk = clamp(1 - Math.abs(night - 0.55) / 0.35, 0, 1)
+  if (dusk > 0) {
+    ctx.globalCompositeOperation = 'lighter'
+    ctx.globalAlpha = dusk * 0.09
+    ctx.fillStyle = '#ff9a4c'
+    ctx.fillRect(0, 0, width, height)
+  }
+  // Cool indigo darkening — deep night darkens offices, never fully black.
+  ctx.globalAlpha = 1
+  ctx.globalCompositeOperation = 'multiply'
+  const lum = 1 - night * 0.4
+  ctx.fillStyle = `rgb(${Math.round(38 + 178 * lum)},${Math.round(44 + 166 * lum)},${Math.round(62 + 148 * lum)})`
+  ctx.fillRect(0, 0, width, height)
+  // Neon reads stronger after dark.
+  ctx.globalCompositeOperation = 'lighter'
+  ctx.globalAlpha = night * 0.05
+  ctx.fillStyle = '#ff3df2'
+  ctx.fillRect(0, 0, width, height)
+  ctx.globalAlpha = night * 0.04
+  ctx.fillStyle = '#22e6ff'
+  ctx.fillRect(0, 0, width, height)
+  ctx.restore()
+}
+
+/* ------------------------------------------------------------------ */
+/* District atmosphere + weather tint                                  */
+/* ------------------------------------------------------------------ */
+
+function weatherAtmosphere(view: View) {
+  if (view.weather === 'festival' || view.event?.type === 'festival') return 1.6
+  if (view.weather === 'haze') return 0.55
+  return 1
+}
+
+export function drawDistrictAtmosphere(ctx: CanvasRenderingContext2D, view: View) {
+  const zoom = view.camera.zoom
+  if (zoom < 0.14) return
+  const width = view.width
+  const height = view.height
+  // Weather screen tint: haze drift or rain sheet over the whole cavern.
+  if (view.weather === 'haze') {
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
+    ctx.globalAlpha = 0.06
+    ctx.fillStyle = '#9fbf8f'
+    ctx.fillRect(0, 0, width, height)
+    ctx.restore()
+  } else if (view.weather === 'rain' || view.event?.type === 'rain') {
+    ctx.save()
+    ctx.globalCompositeOperation = 'multiply'
+    ctx.globalAlpha = 0.06
+    ctx.fillStyle = '#7f96c8'
+    ctx.fillRect(0, 0, width, height)
+    ctx.restore()
+  }
+  if (zoom < 0.24) return
+  const district = getDistrict(view.district)
+  const center = project(view, district.center.x, district.center.y)
+  const radius = 46 + 150 * Math.min(2.4, zoom)
+  if (center[0] < -radius || center[0] > width + radius || center[1] < -radius || center[1] > height + radius) return
+  const pulse = 0.5 + 0.5 * Math.sin(view.time * 0.9)
+  ctx.save()
+  ctx.globalCompositeOperation = 'lighter'
+  const g = ctx.createRadialGradient(center[0], center[1], radius * 0.1, center[0], center[1], radius)
+  g.addColorStop(0, rgba(district.color, (0.075 + pulse * 0.03) * weatherAtmosphere(view)))
+  g.addColorStop(1, rgba(district.color, 0))
+  ctx.fillStyle = g
+  ctx.fillRect(center[0] - radius, center[1] - radius, radius * 2, radius * 2)
+  ctx.restore()
+}
+
+/* ------------------------------------------------------------------ */
+/* Station platforms — queued NPCs and door glow while boarding        */
+/* ------------------------------------------------------------------ */
+
+export function drawStationCrowds(ctx: CanvasRenderingContext2D, view: View) {
+  const zoom = view.camera.zoom
+  if (zoom < 0.5) return
+  const scale: PedScale = zoom > 1.15 ? 2 : 1
+  const time = view.time
+  for (const st of view.city.stations) {
+    const sx = st.axis === 'x' ? st.pos : st.coord
+    const sy = st.axis === 'x' ? st.coord : st.pos
+    const p = project(view, sx, sy, st.z + 2)
+    if (!visiblePoint(view, p, 80)) continue
+    // Nearest train on this line and whether it is dwelling here.
+    let near: Train | null = null
+    let nearDist = 999
+    for (const t of view.city.trains) {
+      if (t.lineId !== st.lineId) continue
+      const d = Math.abs(t.pos - st.pos)
+      if (d < nearDist) {
+        nearDist = d
+        near = t
+      }
+    }
+    const boarding = !!near && !!near.stopped && nearDist < 3.4
+    ctx.save()
+    // Door glow: the stopped train ignites the platform edge.
+    if (boarding && near) {
+      const tx = st.axis === 'x' ? near.pos : st.coord
+      const ty = st.axis === 'x' ? st.coord : near.pos
+      const tp = project(view, tx, ty, st.z + 2)
+      const r = 8 + zoom * 10
+      const pulse = 0.72 + 0.28 * Math.sin(time * 6.2)
+      ctx.globalCompositeOperation = 'lighter'
+      const g = ctx.createRadialGradient(tp[0], tp[1], 0, tp[0], tp[1], r)
+      g.addColorStop(0, rgba(st.color, 0.5 * pulse))
+      g.addColorStop(1, rgba(st.color, 0))
+      ctx.fillStyle = g
+      ctx.fillRect(tp[0] - r, tp[1] - r, r * 2, r * 2)
+    }
+    // Queued NPCs on the platform; they surge toward the doors while boarding.
+    const isX = st.axis === 'x'
+    for (let i = 0; i < 6; i++) {
+      const r0 = hash2(i * 13 + st.pos * 7, 5)
+      const side = i % 2 === 0 ? -1 : 1
+      const base = 2.4 + r0 * 6.5
+      const walk = boarding ? Math.max(1.0, base - ((time * 0.9 + r0 * 3) % 3.2)) : base
+      const along = st.pos + walk * side
+      const jitter = (hash2(i, Math.round(st.pos * 11)) - 0.5) * 3.2
+      const cross = st.coord + jitter
+      const x = isX ? along : cross
+      const y = isX ? cross : along
+      const pp = project(view, x, y, st.z + 2)
+      if (!visiblePoint(view, pp, 16)) continue
+      const frame = boarding ? Math.floor(time * (5.5 + r0) + i * 2) % 4 : i % 3 === 0 ? 0 : Math.floor(time * 1.2 + i) % 4
+      const variant = r0 < 0.28 ? 'worker' : r0 < 0.5 ? 'punk' : r0 < 0.78 ? 'suit' : 'coat'
+      const seedR = hash2(i * 7 + 3, Math.round(st.pos) + 1)
+      const tint = r0 < 0.3 ? '#ffd68a' : r0 < 0.62 ? st.color : '#8ff8ff'
+      const sprite = pedSprite(variant as 'worker' | 'punk' | 'suit' | 'coat', frame, scale, seedR, tint)
+      const w = sprite.width
+      const h = sprite.height
+      ctx.globalAlpha = 0.95
+      ctx.fillStyle = 'rgba(0,0,0,0.4)'
+      ctx.fillRect(
+        Math.round(pp[0]) - (w >> 1) + (w > 6 ? 1 : 0),
+        Math.round(pp[1]) + 1,
+        w - (w > 6 ? 2 : 0),
+        1,
+      )
+      if (side > 0) {
+        ctx.scale(-1, 1)
+        ctx.drawImage(sprite, -Math.round(pp[0]) - (w >> 1), Math.round(pp[1]) + 1 - h)
+      } else {
+        ctx.drawImage(sprite, Math.round(pp[0]) - (w >> 1), Math.round(pp[1]) + 1 - h)
+      }
+    }
+    ctx.restore()
+  }
 }

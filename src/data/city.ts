@@ -15,6 +15,7 @@ import type {
   Prop,
   RailLine,
   Train,
+  TrainStation,
   Vehicle,
   VehicleType,
 } from '../types'
@@ -26,6 +27,7 @@ export const BLOCK_SIZE = 11
 export const ROAD_SIZE = 2
 export const TILE_W = 24
 export const TILE_H = 12
+export const CITY_SEED_DEFAULT = 720412
 
 const TAU = Math.PI * 2
 
@@ -985,7 +987,7 @@ function makeBuilding(
   }
 }
 
-export function generateCity(seed = 720412): CityData {
+export function generateCity(seed: number = CITY_SEED_DEFAULT): CityData {
   resetOccupied()
   const rng = mulberry32(seed)
   const usedNames = new Set<string>()
@@ -1282,6 +1284,46 @@ export function generateCity(seed = 720412): CityData {
     })
   }
 
+  const stations: TrainStation[] = []
+  const stationNames = [
+    'SPINE HALT',
+    'CAVERN GATE',
+    'ARRAY PLATFORM',
+    'CISTERN CROSS',
+    'HELIIX STATION',
+    'FOUNDRY STOPS',
+    'GRAND INTERCHANGE',
+    'LAKESIDE HALT',
+    'VERTIGOS PLATFORM',
+    'RING TRANSFER',
+    'MESH UMBILICAL',
+    'FAR SPUR',
+  ]
+  let stationIdx = 0
+  for (const line of rails) {
+    if (line.kind === 'highway') continue
+    const span = line.to - line.from
+    const count = 3
+    for (let i = 0; i < count; i++) {
+      const pos = line.from + span * ((i + 0.5) / count)
+      const x = line.axis === 'x' ? pos : line.coord
+      const y = line.axis === 'x' ? line.coord : pos
+      const name = stationNames[stationIdx % stationNames.length]
+      stations.push({
+        id: `station-${line.id}-${i}`,
+        name: `${name} // ${line.id.split('-')[0].toUpperCase()}`,
+        lineId: line.id,
+        axis: line.axis,
+        coord: line.coord,
+        z: line.z,
+        pos,
+        district: districtForCell(x, y),
+        color: line.color,
+      })
+      stationIdx += 1
+    }
+  }
+
   const outerBlocks: OuterBlock[] = []
   for (let i = 0; i < 260; i++) {
     const x = between(rng, -38, WORLD_SIZE + 38)
@@ -1315,8 +1357,10 @@ export function generateCity(seed = 720412): CityData {
     drones,
     rails,
     trains,
+    stations,
     emitters,
     outerBlocks,
     landmarks,
+    seed,
   }
 }

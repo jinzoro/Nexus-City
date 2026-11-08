@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Building, District } from '../types'
+import type { Building, CityEvent, District } from '../types'
 import { getDistrict, TILE_H, TILE_W } from '../data/city'
 import { useCityStore } from '../state/useCityStore'
 import { formatNumber } from './ui'
@@ -117,6 +117,33 @@ export function SearchPalette() {
         color: '#22e6ff',
         run: () => setPanel('map'),
       },
+      {
+        id: 'cmd-civic',
+        label: 'CIVIC ACTIONS',
+        detail: 'Player-triggered events: blackout, festival, condensers, transit',
+        icon: 'warning',
+        color: '#ff4fa3',
+        run: () => setPanel('messages'),
+      },
+      ...([
+        ['power', 'TRIGGER BLACKOUT', 'Pull the grid under the current sector', '#ffd45c'],
+        ['festival', 'THROW NEON FESTIVAL', 'Start a holo-parade in the current sector', '#ff4fa3'],
+        ['rain', 'CONDENSER TEST', 'Vent acid drizzle over the current sector', '#8ff8ff'],
+        ['transit', 'HOLD TRANSIT', 'Stop maglev cars on the spine', '#ffb347'],
+        ['network', 'STRESS THE MESH', 'Flood the civic mesh with noise', '#22e6ff'],
+        ['weather', 'SHIFT ATMOSPHERE', 'Cycle the filters, particulate haze citywide', '#63ff9b'],
+      ] as const).map(([type, label, detail, color]) => ({
+        id: `cmd-event-${type}`,
+        label,
+        detail,
+        icon: 'target' as const,
+        color,
+        run: () => {
+          const state = useCityStore.getState()
+          state.triggerEvent(type as CityEvent['type'], state.camera.district)
+          setPanel(null)
+        },
+      })),
       {
         id: 'cmd-systems',
         label: 'OPEN SYSTEMS',

@@ -310,6 +310,24 @@ export interface Train {
   stopped?: boolean
 }
 
+export interface TrainStation {
+  id: string
+  name: string
+  lineId: string
+  axis: 'x' | 'y'
+  /** Track coordinate (the fixed axis of the rail line). */
+  coord: number
+  /** Track z (deck height). */
+  z: number
+  /** Position along the track axis. */
+  pos: number
+  district: DistrictId
+  color: string
+}
+
+/** Weather presentation state handed to the renderer each frame. */
+export type ViewWeather = 'clear' | 'rain' | 'haze' | 'festival'
+
 export interface Emitter {
   id: string
   x: number
@@ -359,9 +377,30 @@ export interface CityData {
   drones: Drone[]
   rails: RailLine[]
   trains: Train[]
+  stations: TrainStation[]
   emitters: Emitter[]
   outerBlocks: OuterBlock[]
   landmarks: Building[]
+  seed: number
+}
+
+/** A persistent player goal tracked across the run. */
+export interface Goal {
+  id: string
+  title: string
+  detail: string
+  /** Progress numerator computed by the store. */
+  progress: (state: GoalContext) => number
+  target: number
+}
+
+export interface GoalContext {
+  visitedDistricts: DistrictId[]
+  tracked: string[]
+  discovered: string[]
+  codexFound: string[]
+  bookmarks: Bookmark[]
+  festivalsThrown: number
 }
 
 export interface CameraInfo {

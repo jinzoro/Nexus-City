@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import type { CSSProperties } from 'react'
-import type { FactionId } from '../../types'
+import type { CityEvent, DistrictId, FactionId } from '../../types'
 import { getDistrict } from '../../data/city'
 import { useCityStore } from '../../state/useCityStore'
 import { severityColor, SectionLabel } from '../ui'
 import { Icon } from '../Icons'
 import { PanelShell } from './PanelShell'
+import { DirectsSection } from '../DirectsSection'
 
 const DISPATCHES: Array<{
   faction: FactionId
@@ -49,6 +50,58 @@ const DISPATCHES: Array<{
   },
 ]
 
+/** Player-triggerable civic actions with visible city effects. */
+const CIVIC_ACTIONS: Array<{
+  type: CityEvent['type']
+  label: string
+  detail: string
+  color: string
+  districtPick: boolean
+}> = [
+  {
+    type: 'power',
+    label: 'DISTRICT BLACKOUT',
+    detail: 'Pull the grid breakers under the camera sector. Emergency cells take over.',
+    color: '#ffd45c',
+    districtPick: true,
+  },
+  {
+    type: 'festival',
+    label: 'NEON FESTIVAL',
+    detail: 'Throw a holo-parade. Sky lanterns, banners and crowd surge.',
+    color: '#ff4fa3',
+    districtPick: true,
+  },
+  {
+    type: 'rain',
+    label: 'CONDENSER TEST',
+    detail: 'Open the ceiling vents. Acid drizzle and wet reflections.',
+    color: '#8ff8ff',
+    districtPick: true,
+  },
+  {
+    type: 'transit',
+    label: 'TRANSIT HOLD',
+    detail: 'Hold the maglev spine at the next platform. Rush-hour cascade.',
+    color: '#ffb347',
+    districtPick: true,
+  },
+  {
+    type: 'network',
+    label: 'MESH STRESS',
+    detail: 'Flood the civic mesh with packet noise. Latency warning.',
+    color: '#22e6ff',
+    districtPick: true,
+  },
+  {
+    type: 'weather',
+    label: 'HAZE VENT',
+    detail: 'Cycle the outer-ring filters. Visibility drops.',
+    color: '#63ff9b',
+    districtPick: false,
+  },
+]
+
 export function MessagesPanel() {
   const log = useCityStore((s) => s.eventLog)
   const events = useCityStore((s) => s.events)
@@ -56,11 +109,19 @@ export function MessagesPanel() {
   const adjustRep = useCityStore((s) => s.adjustRep)
   const factionRep = useCityStore((s) => s.factionRep)
   const pushToast = useCityStore((s) => s.pushToast)
+  const districtNow = useCityStore((s) => s.camera.district)
   const [message, setMessage] = useState('')
+  const [confirming, setConfirming] = useState<CityEvent['type'] | null>(null)
 
   const send = () => {
     transmit(message)
     setMessage('')
+  }
+
+  const runAction = (action: (typeof CIVIC_ACTIONS)[number]) => {
+    const district: DistrictId = action.districtPick ? districtNow : 'central'
+    useCityStore.getState().triggerEvent(action.type, district)
+    setConfirming(null)
   }
 
   return (
@@ -122,6 +183,40 @@ export function MessagesPanel() {
               </button>
             </div>
           </div>
+
+          <SectionLabel>CIVIC ACTIONS</SectionLabel>
+          <div className="civic-actions">
+            {CIVIC_ACTIONS.map((action) => {
+              const armed = confirming === action.type
+              return (
+                <button
+                  key={action.type}
+                  className={`civic-action ${armed ? 'civic-action--armed' : ''}`}
+                  style={{ '--dispatch-color': action.color } as CSSProperties}
+                  onMouseLeave={() => setConfirming((c) => (c === action.type ? null : c))}
+                  onClick={() => {
+                    if (armed) {
+                      runAction(action)
+                      return
+                    }
+                    setConfirming(action.type)
+                  }}
+                >
+                  <span className="civic-action__dot" style={{ background: action.color, boxShadow: `0 0 8px ${action.color}66` }} />
+                  <span className="civic-action__text">
+                    <strong>{action.label}</strong>
+                    <small>{action.districtPick ? `TARGET ${getDistrict(districtNow).name.toUpperCase()}` : 'CITY-WIDE'}</small>
+                  </span>
+                  <em>{armed ? 'CONFIRM?' : 'PUSH'}</em>
+                </button>
+              )
+            })}
+          </div>
+          <p className="civic-actions__note">
+            Direct civic action. Effects are visible on the skyline and the wire — and the factions will notice who pushed the button.
+          </p>
+
+          <DirectsSection />
 
           <SectionLabel>FACTION CHANNELS</SectionLabel>
           <div className="dispatch-grid">

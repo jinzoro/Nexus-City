@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# TypeScript incremental build caches
+*.tsbuildinfo
+
+# Vercel CLI
+.vercel/
+
+# Local env / OS noise
+.env
+.env.local
+.env.*.local
+.DS_Store
+Thumbs.db
+*.local

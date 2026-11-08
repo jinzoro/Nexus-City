@@ -5,6 +5,7 @@ import { CROWN_LABELS, FACADE_LABELS, STREET_LABELS } from '../data/personality'
 import { useCityStore } from '../state/useCityStore'
 import { formatNumber, Meter, SectionLabel, StatusBadge, statusColor } from './ui'
 import { Icon } from './Icons'
+import { FacilityChannel } from './FacilityChannel'
 
 const INTERIOR_ROOMS = [
   'ATRIUM ACCESS',
@@ -525,6 +526,8 @@ export function FacilityView() {
                 <Icon name="enter" size={12} /> EXIT
               </button>
             </div>
+
+            <FacilityChannel building={building} />
           </div>
         </div>
 

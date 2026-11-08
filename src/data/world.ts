@@ -5,6 +5,8 @@ import type {
   CodexEntry,
   Faction,
   FactionId,
+  Goal,
+  GoalContext,
   NewsItem,
   Pedestrian,
   RailLine,
@@ -14,6 +16,56 @@ import type {
 } from '../types'
 import { getDistrict } from './city'
 import { pedMeta, type PedVariant } from '../engine/spriteFactory'
+
+/* ------------------------------------------------------------------ */
+/* Player goals                                                        */
+/* ------------------------------------------------------------------ */
+
+/** All nine district ids, for the sector-completion goal. */
+export const GOALS: Goal[] = [
+  {
+    id: 'goal-districts',
+    title: 'CAVE CARTOGRAPHER',
+    detail: 'Visit all nine sectors of the cavern (drive the camera into each).',
+    target: 9,
+    progress: (s: GoalContext) => s.visitedDistricts.length,
+  },
+  {
+    id: 'goal-track',
+    title: 'NODE WATCHER',
+    detail: 'Keep 3 active nodes pinned to the watch list at the same time.',
+    target: 3,
+    progress: (s: GoalContext) => Math.min(s.tracked.length, 3),
+  },
+  {
+    id: 'goal-discover',
+    title: 'DEEP SURVEYOR',
+    detail: 'Discover 10 structural nodes by clicking them on the map.',
+    target: 10,
+    progress: (s: GoalContext) => Math.min(s.discovered.length, 10),
+  },
+  {
+    id: 'goal-codex',
+    title: 'LORE ARCHIVIST',
+    detail: 'File 5 codex entries from landmarks and events.',
+    target: 5,
+    progress: (s: GoalContext) => Math.min(s.codexFound.length, 5),
+  },
+  {
+    id: 'goal-festival',
+    title: 'NEON PATRON',
+    detail: 'Throw a neon festival with a civic action and visit it while it burns.',
+    target: 1,
+    progress: (s: GoalContext) => Math.min(s.festivalsThrown, 1),
+  },
+  {
+    id: 'goal-vantage',
+    title: 'VANTAGE KEEPER',
+    detail: 'Save a camera vantage point for the map rail.',
+    target: 1,
+    progress: (s: GoalContext) => Math.min(s.bookmarks.length, 1),
+  },
+]
 
 /* ------------------------------------------------------------------ */
 /* Factions                                                            */

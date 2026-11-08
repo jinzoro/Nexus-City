@@ -92,6 +92,11 @@ function drawWindows(
   const faceH = Math.hypot(topA[0] - bottomA[0], topA[1] - bottomA[1])
   if (faceW < 3 || faceH < 4) return
 
+  // Day/night: windows glow harder after "sunset", and more of them light up.
+  const night = Math.min(1, Math.max(0, 1 - (view.daylight ?? 1)))
+  const glow = 0.55 + night * 0.9
+  const litBias = night * 0.16
+
   const pattern = b.facade
   const cellW = faceW / cols
   const cellH = faceH / rows
@@ -113,7 +118,7 @@ function drawWindows(
       const v1 = (row + 0.54) / rows
       const quad = [point(0.03, v0), point(0.97, v0), point(0.97, v1), point(0.03, v1)]
       const color = mood > 0.86 ? '#ffd9a0' : mood > 0.7 ? b.neon : b.window
-      ctx.globalAlpha = dim * (0.16 + mood * 0.42)
+      ctx.globalAlpha = Math.min(1, dim * (0.16 + mood * 0.42) * glow)
       polygon(ctx, quad, color)
       if (lod >= 3) {
         // desk lights / ceiling strips inside the band
@@ -148,7 +153,10 @@ function drawWindows(
     return
   }
 
-  const litThreshold = pattern === 'diagrid' ? 0.66 : pattern === 'capsule' ? 0.44 : lod === 1 ? 0.38 : 0.46
+  const litThreshold = Math.max(
+    0.1,
+    (pattern === 'diagrid' ? 0.66 : pattern === 'capsule' ? 0.44 : lod === 1 ? 0.38 : 0.46) - litBias,
+  )
   const winW = Math.max(1, Math.round(cellW * (lod >= 3 ? 0.5 : 0.4)))
   const winH = Math.max(1, Math.round(cellH * (lod >= 3 ? 0.42 : 0.3)))
   const checkerOffset = seed % 2
@@ -176,7 +184,7 @@ function drawWindows(
       const c = point((col + 0.5) / cols, (row + 0.5) / rows)
       const px = Math.round(c[0] - winW / 2)
       const py = Math.round(c[1] - winH / 2)
-      ctx.globalAlpha = Math.min(1, dim * (0.22 + mood * 0.45 + r * 0.3))
+      ctx.globalAlpha = Math.min(1, dim * (0.22 + mood * 0.45 + r * 0.3) * glow)
       ctx.fillStyle = color
       if (pattern === 'louver') {
         ctx.fillRect(px, py + 1, Math.max(1, winW), 1)
@@ -1284,7 +1292,7 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, view: View, b: Build
       break
   }
 
-  if (lod >= 2) {
+  if (lod >= 2 && zoom > 0.75) {
     const streetPts = facePoints(view, b.x, b.y, b.w, b.d, 0, 5)
     drawStorefront(ctx, view, b, streetPts, lod, dim)
   }
