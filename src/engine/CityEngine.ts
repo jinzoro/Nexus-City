@@ -115,6 +115,8 @@ export class CityEngine {
   private pedMap: Map<string, import('../types').Pedestrian>
   private vehicleMap: Map<string, import('../types').Vehicle>
   private trainMap: Map<string, import('../types').Train>
+  private buildingMask: Uint8Array | null = null
+  private playerTick = 0
   private dwellMap = new Map<string, number>()
   private stationMap = new Map<string, number[]>()
   private pointers = new Map<number, PointerInfo>()
@@ -170,6 +172,7 @@ export class CityEngine {
     this.groundCtx.imageSmoothingEnabled = false
     this.cityCtx.imageSmoothingEnabled = false
     this.fgCtx.imageSmoothingEnabled = false
+    this.buildMask()
     this.resize()
     this.bind()
     this.last = performance.now()
@@ -256,6 +259,7 @@ export class CityEngine {
     this.view.time = this.time
     this.runFpsWatch(now)
     this.update(dt)
+    this.updatePlayer()
     // Sync the atmosphere section of the view before any layer rendering.
     this.view.daylight = this.daylight
     this.view.weather = this.weather
@@ -274,6 +278,7 @@ export class CityEngine {
     drawVehicles(ctx, this.view)
     drawPedestrians(ctx, this.view)
     ctx.drawImage(this.cityCanvas, 0, 0)
+    this.drawPlayer(ctx)
     drawStationCrowds(ctx, this.view)
     drawTrains(ctx, this.view)
     drawAircraft(ctx, this.view)
@@ -326,6 +331,55 @@ export class CityEngine {
     } else {
       watch.lowSeconds = 0
     }
+  }
+
+  private updatePlayer() {
+    try {
+      const store = (globalThis as any).useCityStore
+      if (!store || typeof store.getState !== 'function') return
+      const s = store.getState()
+      const p = s.player
+      if (!p.moving || !p.target) return
+      const dx = p.target.x - p.x
+      const dy = p.target.y - p.y
+      const dist = Math.hypot(dx, dy)
+      const speed = 0.8
+      const step = speed * 0.016
+      if (dist <= step) {
+        store.setState((prev: any) => ({ player: { ...prev.player, x: p.target.x, y: p.target.y, moving: false, target: null, path: [] } }))
+      } else {
+        const nx = p.x + dx / dist * step
+        const ny = p.y + dy / dist * step
+        const facing = dx > 0 ? 'right' : dx < 0 ? 'left' : dy > 0 ? 'down' : 'up'
+        store.setState((prev: any) => ({ player: { ...prev.player, x: nx, y: ny, facing } }))
+      }
+    } catch { /* no-op */ }
+  }
+
+  private drawPlayer(ctx: CanvasRenderingContext2D) {
+    try {
+      const store = (globalThis as any).useCityStore
+      const social = (globalThis as any).useSocialStore
+      if (!store || !social) return
+      const s = store.getState()
+      const prof = social.getState().profile
+      if (!prof) return
+      const p = s.player
+      const pt = project(this.view, p.x, p.y, 0.5)
+      const x = Math.round(pt[0]) - 6
+      const y = Math.round(pt[1]) - 14
+      ctx.save()
+      ctx.fillStyle = prof.body
+      ctx.fillRect(x, y, 12, 10)
+      ctx.fillStyle = prof.visor
+      ctx.fillRect(x + 2, y + 2, 8, 2)
+      ctx.fillStyle = '#8ff8ff'
+      if (p.facing === 'up') ctx.fillRect(x + 4, y - 2, 4, 2)
+      if (p.facing === 'down') ctx.fillRect(x + 4, y + 12, 4, 2)
+      if (p.facing === 'left') ctx.fillRect(x - 2, y + 4, 2, 4)
+      if (p.facing === 'right') ctx.fillRect(x + 12, y + 4, 2, 4)
+      ctx.restore()
+    } catch { /* no-op */ }
   }
 
   private update(dt: number) {
@@ -620,7 +674,21 @@ export class CityEngine {
       const worldY = this.camera.y + (y - this.height / 2) / this.camera.zoom
       const cellX = worldX / TILE_W + worldY / TILE_H
       const cellY = worldY / TILE_H - worldX / TILE_W
-      this.focusCell(cellX, cellY, clamp(this.camera.zoom * 1.8, MIN_ZOOM, MAX_ZOOM))
+      try {
+        const store = (globalThis as any).useCityStore
+        if (store && typeof store.getState === 'function') {
+          const s = store.getState()
+          if (s && s.player && s.player.mode === 'citizen') {
+            s.playerMoveTo(cellX, cellY)
+          } else {
+            this.focusCell(cellX, cellY, clamp(this.camera.zoom * 1.8, MIN_ZOOM, MAX_ZOOM))
+          }
+        } else {
+          this.focusCell(cellX, cellY, clamp(this.camera.zoom * 1.8, MIN_ZOOM, MAX_ZOOM))
+        }
+      } catch {
+        this.focusCell(cellX, cellY, clamp(this.camera.zoom * 1.8, MIN_ZOOM, MAX_ZOOM))
+      }
     }
   }
 
@@ -743,6 +811,22 @@ export class CityEngine {
     }
   }
 
+  buildMask() {
+    const size = this.city.size
+    this.buildingMask = new Uint8Array(size * size)
+    for (const b of this.city.buildings) {
+      const x0 = Math.max(0, Math.floor(b.x))
+      const y0 = Math.max(0, Math.floor(b.y))
+      const x1 = Math.min(size, Math.ceil(b.x + b.w))
+      const y1 = Math.min(size, Math.ceil(b.y + b.d))
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          this.buildingMask[y * size + x] = 1
+        }
+      }
+    }
+  }
+
   setFollowingEntity(target: FollowTarget) {
     this.followTarget = target
     if (target) {
@@ -756,6 +840,16 @@ export class CityEngine {
       }
     }
     this.callbacks.onFollowChange?.(!!target)
+  }
+
+  followPlayer(px: number, py: number, follow = true) {
+    if (follow) {
+      this.target = {
+        x: (px - py) * (TILE_W / 2),
+        y: (px + py) * (TILE_H / 2),
+        zoom: Math.max(1.1, this.camera.zoom),
+      }
+    }
   }
 
   setPhotoMode(on: boolean) {

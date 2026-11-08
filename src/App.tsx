@@ -7,6 +7,7 @@ import { ambient } from './audio/ambient'
 import { useCityStore } from './state/useCityStore'
 import { useSocialStore } from './social/useSocialStore'
 import { AccountGate } from './components/AccountGate'
+import { PlayerHud } from './components/PlayerHud'
 import { TopBar } from './components/TopBar'
 import { BottomNav } from './components/BottomNav'
 import { SideControls } from './components/SideControls'
@@ -408,6 +409,7 @@ export default function App() {
           <div className="hud">
             <TopBar />
             <EventFeed />
+            <PlayerHud />
             <SideControls />
             <div className="hud-minimap">
               <div className="hud-minimap__head">
