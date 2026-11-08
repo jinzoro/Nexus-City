@@ -356,7 +356,7 @@ export default function App() {
         return
       }
 
-      const panels = { m: 'map', s: 'sectors', t: 'transit', y: 'systems', n: 'messages', p: 'profile' } as const
+      const panels = { m: 'map', s: 'sectors', t: 'transit', y: 'systems', n: 'messages', p: 'profile', g: 'settings' } as const
       if (key in panels) {
         state.togglePanel(panels[key as keyof typeof panels])
         return

@@ -8,6 +8,7 @@ const ITEMS: Array<{ id: Exclude<PanelId, null>; label: string; icon: IconName; 
   { id: 'systems', label: 'SYSTEMS', icon: 'systems', key: 'Y' },
   { id: 'messages', label: 'MESSAGES', icon: 'messages', key: 'N' },
   { id: 'profile', label: 'PROFILE', icon: 'profile', key: 'P' },
+  { id: 'settings', label: 'SETTINGS', icon: 'settings', key: 'G' },
 ]
 
 export function BottomNav() {

@@ -18,7 +18,7 @@ import { ambient } from '../audio/ambient'
 import { defaultBookmarks, GOALS, createNewsItem } from '../data/world'
 import { createEventForType } from '../data/events'
 
-export type PanelId = 'map' | 'sectors' | 'transit' | 'systems' | 'messages' | 'profile' | null
+export type PanelId = 'map' | 'sectors' | 'transit' | 'systems' | 'messages' | 'profile' | 'settings' | null
 
 const STORAGE_KEY = 'nexus-city-progress-v1'
 

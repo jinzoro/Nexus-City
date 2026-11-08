@@ -5,6 +5,7 @@ import { TransitPanel } from './TransitPanel'
 import { SystemsPanel } from './SystemsPanel'
 import { MessagesPanel } from './MessagesPanel'
 import { ProfilePanel } from './ProfilePanel'
+import { SettingsPanel } from '../SettingsPanel'
 
 export function Panels() {
   const activePanel = useCityStore((s) => s.activePanel)
@@ -17,6 +18,7 @@ export function Panels() {
       {activePanel === 'systems' ? <SystemsPanel /> : null}
       {activePanel === 'messages' ? <MessagesPanel /> : null}
       {activePanel === 'profile' ? <ProfilePanel /> : null}
+      {activePanel === 'settings' ? <SettingsPanel /> : null}
     </div>
   )
 }

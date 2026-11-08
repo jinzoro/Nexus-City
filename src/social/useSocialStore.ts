@@ -9,8 +9,10 @@ import { socialEnabled, supabase } from './client'
 import type {
   BuildingChannelMessage,
   DirectThreadMessage,
+  DmPolicy,
   PresenceEntry,
   SocialProfile,
+  Visibility,
 } from './types'
 
 const PENDING_HANDLE_KEY = 'nexus.pendingHandle'
@@ -36,12 +38,26 @@ export const VISOR_SWATCHES = [
 
 type SocialStatus = 'offline' | 'anonymous' | 'linking' | 'online'
 
+export interface AccountNotice {
+  tone: 'ok' | 'error'
+  text: string
+}
+
 interface SocialState {
   enabled: boolean
   status: SocialStatus
   authError: string | null
   profile: SocialProfile | null
   presence: PresenceEntry[]
+
+  /** Set after sign-up when Supabase requires email confirmation. */
+  signupPending: { email: string } | null
+  /** Epoch ms before which the resend button stays disabled. */
+  resendCooldownUntil: number
+  resendStatus: 'idle' | 'sending' | 'sent' | 'error'
+  /** Feedback for the settings/security forms. */
+  accountNotice: AccountNotice | null
+  accountBusy: boolean
 
   channelBuildingId: string | null
   channelBuildingName: string | null
@@ -52,10 +68,26 @@ interface SocialState {
 
   init: () => Promise<void>
   clearAuthError: () => void
+  clearAccountNotice: () => void
   signUp: (email: string, password: string, handle: string) => Promise<void>
   signIn: (email: string, password: string) => Promise<void>
   signOut: () => Promise<void>
-  saveIdentity: (patch: Partial<Pick<SocialProfile, 'handle' | 'body' | 'visor' | 'built'>>) => Promise<void>
+  signOutEverywhere: () => Promise<void>
+  resendConfirmation: () => Promise<void>
+  cancelSignup: () => void
+  saveIdentity: (
+    patch: Partial<
+      Pick<
+        SocialProfile,
+        'handle' | 'body' | 'visor' | 'built' | 'bio' | 'statusText' | 'visibility' | 'dmPolicy'
+      >
+    >,
+  ) => Promise<void>
+
+  updateEmail: (email: string) => Promise<void>
+  updatePassword: (current: string, next: string) => Promise<void>
+  deleteAccount: () => Promise<void>
+  exportData: () => Promise<void>
 
   enterBuilding: (buildingId: string, buildingName: string) => Promise<void>
   leaveBuilding: () => Promise<void>
@@ -64,6 +96,24 @@ interface SocialState {
   openDirect: (userId: string, handle: string) => Promise<void>
   closeDirect: () => void
   sendDirect: (content: string) => Promise<void>
+}
+
+/** Map a Supabase `profiles` row (snake_case) onto the domain profile. */
+function rowToProfile(row: Record<string, unknown>): SocialProfile {
+  const visibility = row.visibility === 'ghost' ? 'ghost' : 'online'
+  const policy = row.dm_policy
+  const dmPolicy: DmPolicy = policy === 'floor' || policy === 'none' ? policy : 'all'
+  return {
+    id: row.id as string,
+    handle: row.handle as string,
+    body: row.body as string,
+    visor: row.visor as string,
+    built: Math.min(2, Math.max(0, Number(row.built))) as 0 | 1 | 2,
+    bio: (row.bio as string) ?? '',
+    statusText: (row.status_text as string) ?? '',
+    visibility,
+    dmPolicy,
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -87,6 +137,9 @@ function mePresenceMeta(get: () => SocialState) {
     body: p.body,
     visor: p.visor,
     built: p.built,
+    bio: p.bio,
+    statusText: p.statusText,
+    dmPolicy: p.dmPolicy,
     buildingId: get().channelBuildingId,
     buildingName: get().channelBuildingName,
     district: null as string | null,
@@ -95,8 +148,35 @@ function mePresenceMeta(get: () => SocialState) {
 
 function pushPresence(get: () => SocialState, set: (patch: Partial<SocialState>) => void) {
   if (!presenceCh) return
+  // Ghost mode: stay signed in locally but disappear from the city roster.
+  if (get().profile?.visibility === 'ghost') {
+    void presenceCh.untrack()
+    return
+  }
   const meta = mePresenceMeta(get)
-  if (meta) presenceCh.track(meta)
+  if (meta) void presenceCh.track(meta)
+}
+
+/** Tear down every live channel and return the store to a signed-out shape. */
+function resetSessionState(set: (patch: Partial<SocialState>) => void) {
+  closeBuildingChannel()
+  closeDirectChannel()
+  if (presenceCh) {
+    void presenceCh.unsubscribe()
+    presenceCh = null
+  }
+  cachedSessionUserId = null
+  set({
+    profile: null,
+    presence: [],
+    channelMessages: [],
+    channelBuildingId: null,
+    channelBuildingName: null,
+    dmWith: null,
+    dmThread: [],
+    accountBusy: false,
+    status: 'anonymous',
+  })
 }
 
 function pullPresence(set: (patch: Partial<SocialState>) => void) {
@@ -138,6 +218,12 @@ export const useSocialStore = create<SocialState>()((set, get) => ({
   profile: null,
   presence: [],
 
+  signupPending: null,
+  resendCooldownUntil: 0,
+  resendStatus: 'idle',
+  accountNotice: null,
+  accountBusy: false,
+
   channelBuildingId: null,
   channelBuildingName: null,
   channelMessages: [],
@@ -148,7 +234,8 @@ export const useSocialStore = create<SocialState>()((set, get) => ({
   /* ---------------------------------------------------------------- */
 
   init: async () => {
-    if (!socialEnabled || booted) return
+    if (!socialEnabled) return
+    if (booted) return
     booted = true
 
     // Expired / invalid email-confirmation links land back here with the error
@@ -212,13 +299,7 @@ export const useSocialStore = create<SocialState>()((set, get) => ({
       .eq('id', user.id)
       .single()
     if (row) {
-      profile = {
-        id: row.id,
-        handle: row.handle as string,
-        body: row.body as string,
-        visor: row.visor as string,
-        built: Math.min(2, Math.max(0, Number(row.built))) as 0 | 1 | 2,
-      }
+      profile = rowToProfile(row as Record<string, unknown>)
     } else {
       // Confirmation-required signups have no session yet, so the chosen
       // handle is stashed locally and claimed on the first authenticated boot.
@@ -244,13 +325,7 @@ export const useSocialStore = create<SocialState>()((set, get) => ({
           .select()
           .single()
         if (created) {
-          profile = {
-            id: created.id,
-            handle: created.handle as string,
-            body: created.body as string,
-            visor: created.visor as string,
-            built: Math.min(2, Math.max(0, Number(created.built))) as 0 | 1 | 2,
-          }
+          profile = rowToProfile(created as Record<string, unknown>)
           break
         }
         // 23505 = handle taken; try the fallback. Anything else is fatal.
@@ -278,6 +353,30 @@ export const useSocialStore = create<SocialState>()((set, get) => ({
   },
 
   clearAuthError: () => set({ authError: null }),
+
+  clearAccountNotice: () => set({ accountNotice: null }),
+
+  resendConfirmation: async () => {
+    const { signupPending, resendStatus, resendCooldownUntil } = get()
+    if (!socialEnabled || !signupPending || resendStatus !== 'idle') return
+    if (Date.now() < resendCooldownUntil) return
+    set({ resendStatus: 'sending' })
+    try {
+      const client = await supabase()
+      await client.auth.resend({ type: 'signup', email: signupPending.email })
+      const now = Date.now()
+      set({ resendStatus: 'sent', resendCooldownUntil: now + 60_000 })
+    } catch (err: unknown) {
+      set({
+        resendStatus: 'error',
+        authError: (err as Error)?.message?.toUpperCase() ?? 'RESEND FAILED',
+      })
+    }
+  },
+
+  cancelSignup: () => {
+    set({ signupPending: null })
+  },
 
   signUp: async (email, password, handle) => {
     if (!socialEnabled) return
@@ -311,7 +410,10 @@ export const useSocialStore = create<SocialState>()((set, get) => ({
       }
       set({
         status: 'anonymous',
-        authError: 'CONFIRMATION SENT // CHECK YOUR INBOX, CONFIRM, THEN SIGN IN',
+        authError: null,
+        signupPending: { email: email.trim() },
+        resendStatus: 'idle',
+        resendCooldownUntil: Date.now() + 60_000,
       })
       return
     }
@@ -337,7 +439,7 @@ export const useSocialStore = create<SocialState>()((set, get) => ({
 
   signIn: async (email, password) => {
     if (!socialEnabled) return
-    set({ authError: null, status: 'linking' })
+    set({ authError: null, status: 'linking', signupPending: null })
     const client = await supabase()
     const { error } = await client.auth.signInWithPassword({ email: email.trim(), password })
     if (error) {
@@ -352,35 +454,29 @@ export const useSocialStore = create<SocialState>()((set, get) => ({
     if (!socialEnabled) return
     const client = await supabase()
     await client.auth.signOut()
-    closeBuildingChannel()
-    closeDirectChannel()
-    if (presenceCh) {
-      void presenceCh.unsubscribe()
-      presenceCh = null
-    }
-    cachedSessionUserId = null
-    set({
-      profile: null,
-      presence: [],
-      channelMessages: [],
-      channelBuildingId: null,
-      channelBuildingName: null,
-      dmWith: null,
-      dmThread: [],
-      authError: null,
-      status: 'anonymous',
-    })
+    resetSessionState(set)
+    set({ authError: null, accountNotice: null })
+  },
+
+  signOutEverywhere: async () => {
+    if (!socialEnabled) return
+    set({ accountBusy: true })
+    const client = await supabase()
+    await client.auth.signOut({ scope: 'global' })
+    resetSessionState(set)
+    set({ authError: null, accountNotice: null })
   },
 
   saveIdentity: async (patch) => {
     const { profile, status } = get()
     if (!socialEnabled || status !== 'online' || !profile) return
+    set({ accountBusy: true, accountNotice: null })
     const client = await supabase()
-    const clean: Record<string, string | number> = {}
+    const clean: Record<string, unknown> = {}
     if (patch.handle) {
       const h = patch.handle.trim().replace(/[^a-zA-Z0-9_-]/g, '')
       if (h.length < 3 || h.length > 16) {
-        set({ authError: 'HANDLE NEEDS 3–16 LETTERS / DIGITS / _ / -' })
+        set({ accountBusy: false, authError: 'HANDLE NEEDS 3–16 LETTERS / DIGITS / _ / -' })
         return
       }
       clean.handle = h
@@ -388,14 +484,102 @@ export const useSocialStore = create<SocialState>()((set, get) => ({
     if (patch.body) clean.body = patch.body
     if (patch.visor) clean.visor = patch.visor
     if (patch.built !== undefined) clean.built = patch.built
+    if (patch.bio !== undefined) clean.bio = patch.bio.slice(0, 160)
+    if (patch.statusText !== undefined) clean.status_text = patch.statusText.slice(0, 40)
+    if (patch.visibility !== undefined) clean.visibility = patch.visibility
+    if (patch.dmPolicy !== undefined) clean.dm_policy = patch.dmPolicy
     const { error } = await client.from('profiles').update(clean).eq('id', profile.id)
     if (error) {
-      if (error.code === '23505') set({ authError: 'HANDLE CLAIMED // PICK ANOTHER' })
-      else set({ authError: error.message.toUpperCase() })
+      const msg = error.code === '23505' ? 'HANDLE CLAIMED // PICK ANOTHER' : error.message.toUpperCase()
+      set({ accountBusy: false, accountNotice: { tone: 'error', text: msg } })
       return
     }
-    set({ profile: { ...profile, ...clean } as SocialProfile, authError: null })
+    const { data } = await client.from('profiles').select('*').eq('id', profile.id).single()
+    const updated = data ? rowToProfile(data as Record<string, unknown>) : { ...profile, ...clean } as SocialProfile
+    set({ profile: updated, accountBusy: false, accountNotice: { tone: 'ok', text: 'PROFILE SAVED' } })
     pushPresence(get, set)
+  },
+
+  updateEmail: async (email) => {
+    const { profile, status } = get()
+    if (!socialEnabled || status !== 'online' || !profile) return
+    set({ accountBusy: true })
+    const client = await supabase()
+    try {
+      const { error } = await client.auth.updateUser({ email: email.trim() })
+      if (error) {
+        set({ accountBusy: false, accountNotice: { tone: 'error', text: error.message.toUpperCase() } })
+        return
+      }
+      set({ accountBusy: false, accountNotice: { tone: 'ok', text: 'EMAIL CHANGE PENDING // CONFIRM THE NEW ADDRESS' } })
+    } catch (e: unknown) {
+      set({ accountBusy: false, accountNotice: { tone: 'error', text: (e as Error).message.toUpperCase() } })
+    }
+  },
+
+  updatePassword: async (current, next) => {
+    const { profile, status, authError } = get()
+    if (!socialEnabled || status !== 'online' || !profile) return
+    set({ accountBusy: true })
+    const client = await supabase()
+    try {
+      const { data: user } = await client.auth.getUser()
+      const email = user.user?.email ?? ''
+      if (!email) {
+        set({ accountBusy: false, accountNotice: { tone: 'error', text: 'NO USER EMAIL ON FILE' } })
+        return
+      }
+      const { error: re } = await client.auth.signInWithPassword({ email, password: current })
+      if (re) {
+        set({ accountBusy: false, accountNotice: { tone: 'error', text: 'CURRENT PASSWORD WRONG' } })
+        return
+      }
+      const { error } = await client.auth.updateUser({ password: next })
+      if (error) {
+        set({ accountBusy: false, accountNotice: { tone: 'error', text: error.message.toUpperCase() } })
+        return
+      }
+      set({ accountBusy: false, accountNotice: { tone: 'ok', text: 'PASSWORD UPDATED' } })
+    } catch (e: unknown) {
+      set({ accountBusy: false, accountNotice: { tone: 'error', text: (e as Error).message.toUpperCase() } })
+    }
+  },
+
+  deleteAccount: async () => {
+    const { profile, status } = get()
+    if (!socialEnabled || status !== 'online' || !profile) return
+    set({ accountBusy: true })
+    const client = await supabase()
+    try {
+      await client.from('profiles').delete().eq('id', profile.id)
+      await client.rpc('delete_my_user')
+      resetSessionState(set)
+      set({ accountNotice: { tone: 'ok', text: 'ACCOUNT DELETED' } })
+    } catch (e: unknown) {
+      set({ accountBusy: false, accountNotice: { tone: 'error', text: (e as Error).message.toUpperCase() } })
+    }
+  },
+
+  exportData: async () => {
+    const { profile, status } = get()
+    if (!socialEnabled || status !== 'online' || !profile) return
+    set({ accountBusy: true })
+    const client = await supabase()
+    try {
+      const { data: p } = await client.from('profiles').select('*').eq('id', profile.id).single()
+      const { data: msgs } = await client.from('building_messages').select('*').eq('user_id', profile.id)
+      const payload = { profile: p, buildingMessages: msgs }
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `nexus-export-${profile.handle}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+      set({ accountBusy: false, accountNotice: { tone: 'ok', text: 'DATA EXPORTED' } })
+    } catch (e: unknown) {
+      set({ accountBusy: false, accountNotice: { tone: 'error', text: (e as Error).message.toUpperCase() } })
+    }
   },
 
   /* ---------------------------------------------------------------- */

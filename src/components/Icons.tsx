@@ -7,6 +7,7 @@ export type IconName =
   | 'systems'
   | 'messages'
   | 'profile'
+  | 'settings'
   | 'search'
   | 'plus'
   | 'minus'
@@ -34,6 +35,13 @@ export type IconName =
   | 'target'
 
 const PATHS: Record<IconName, ReactNode> = {
+  settings: (
+    <>
+      <path d="M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z" opacity=".35" />
+      <circle cx="12" cy="12" r="2.8" fill="currentColor" stroke="none" />
+      <path d="M12 6.5V4M12 20v-2.5M6.5 12H4M20 12h-2.5M7 7 5 5M19 19 17 17M7 17 5 19M19 7 17 5" />
+    </>
+  ),
   map: (
     <>
       <path d="M3 5.5 8.5 3l7 2.5L21 3v15.5L15.5 21l-7-2.5L3 21Z" />

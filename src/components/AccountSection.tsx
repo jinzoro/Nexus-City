@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { CSSProperties } from 'react'
+import { useCityStore } from '../state/useCityStore'
 import { useSocialStore, BODY_SWATCHES, VISOR_SWATCHES } from '../social/useSocialStore'
 import { PixelCitizen } from '../social/PixelCitizen'
 import { SectionLabel } from './ui'
@@ -50,6 +51,7 @@ export function AccountSection() {
   }
 
   if (status === 'online' && profile) {
+    const setPanel = useCityStore(s => s.setPanel)
     return (
       <>
         <SectionLabel>IDENTITY</SectionLabel>
@@ -61,6 +63,7 @@ export function AccountSection() {
               <span>CITIZEN · LINKED</span>
             </div>
             <button className="mini-btn" onClick={() => void signOut()}>UNLINK</button>
+            <button className="mini-btn" onClick={() => setPanel('settings')}>SETTINGS</button>
           </div>
 
           <div className="account__wardrobe">
@@ -191,6 +194,11 @@ export function AccountSection() {
             ? '6+ character access code. Your handle seeds your avatar suit and citizen sigil.'
             : 'Welcome back, operator. Your avatar, channels and threads resume with you.'}
         </p>
+        {authError ? null : (
+          <p className="account__note">
+            Tip: if you just signed up, check your email and confirm. You’ll see a “Check your inbox” screen automatically.
+          </p>
+        )}
       </form>
     </>
   )

@@ -1,5 +1,6 @@
 import { getDistrict } from '../data/city'
 import { useCityStore } from '../state/useCityStore'
+import { useSocialStore } from '../social/useSocialStore'
 import { formatNumber, PulseDot } from './ui'
 import { Icon } from './Icons'
 
@@ -36,6 +37,8 @@ export function TopBar() {
   const toggleAudio = useCityStore((s) => s.toggleAudio)
   const setSearchOpen = useCityStore((s) => s.setSearchOpen)
   const overlay = useCityStore((s) => s.overlay)
+  const setPanel = useCityStore((s) => s.setPanel)
+  const { profile, status } = useSocialStore()
   const setOverlay = useCityStore((s) => s.setOverlay)
   const photoMode = useCityStore((s) => s.photoMode)
   const scanMode = useCityStore((s) => s.scanMode)
@@ -99,6 +102,11 @@ export function TopBar() {
           </div>
         </div>
         <div className="topbar__actions">
+          {status === 'online' && profile ? (
+            <button className="icon-btn" onClick={() => setPanel('settings')} title="Settings" aria-label="Settings">
+              <Icon name="settings" size={17} />
+            </button>
+          ) : null}
           <button
             className="icon-btn"
             onClick={() => setSearchOpen(true)}
