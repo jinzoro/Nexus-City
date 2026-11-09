@@ -53,8 +53,9 @@ It targets desktop first but is responsive down to 320 px wide.
 5. **Living systems** — clock + day/night sky, weather, rolling events, player
    civic actions, goals, news wire, ambient audio, live power/network/stability
    stats, faction standing, codex lore.
-6. **Facility view** — entering a selected building opens an interior pixel view
-   with its own controls.
+6. **Facility view** — entering a selected building opens a live top-down floor
+   plan (type-specific rooms, furniture, wandering occupants and signed-in
+   visitors) with a SECTION cross-section toggle and its own controls.
 7. **Touch devices** — after the intro, a PINCH/DRAG hint floats above the nav;
    it auto-dismisses and taps away.
 
@@ -67,18 +68,22 @@ It targets desktop first but is responsive down to 320 px wide.
 | Drag | Pan |
 | Scroll / pinch | Zoom |
 | `Ctrl/⌘ + K` or `/` | Search palette and `>` commands |
-| `M` `S` `T` `Y` `N` `P` | Map / Sectors / Transit / Systems / Messages / Profile |
+| `M` `X` `T` `Y` `N` `P` `G` | Map / Sectors / Transit / Systems / Messages / Profile / Settings |
+| `W A S D` / arrows | Walk your citizen (screen-relative, citizen mode) |
+| `Shift` (hold) | Sprint (2× walk speed) |
 | `O` | City overview |
+| `C` | Toggle citizen / survey mode (player avatar) |
 | `0` | Reset view |
 | `+` / `-` | Zoom in / out |
 | `F` | Photo mode (hide HUD, export PNG, save vantage) |
 | `V` | Structural scan overlay |
-| `B` | Book current camera position as a vantage |
-| `?` | Onboarding / orientation overlay |
+| `B` | Book current camera position as a vantage (photo mode) |
+| `?` | Field manual (tabbed help overlay) |
 | `Esc` | Close search → facility → panel → selection → entity |
 | Click building | Open node panel |
 | Double-click building | Focus building |
 | Click citizen / vehicle / train | Citizens' Signal card (follow / re-center) |
+| Double-click open ground (citizen mode) | Walk your avatar to that cell |
 | MESSAGES > CIVIC ACTIONS button | Arm (click 1) → fire event (click 2); mouse-leave disarms |
 
 Search palette commands also fire civic actions: `> blackout`, `> festival`,
@@ -129,6 +134,8 @@ src/
                              emitters, billboards, holograms, overlays, weather,
                              day/night + district tints, station crowds
     spriteFactory.ts         Cached pixel pedestrian sprites
+    interior.ts              Deterministic facility floor plans, furniture,
+                             wandering occupants + presence avatars
     pixelFont.ts             Procedural 5×7 pixel font for in-world signage
   state/
     useCityStore.ts          Zustand UI/app state, lookups, seeds, civic events,
@@ -136,8 +143,8 @@ src/
   components/
     TopBar, BottomNav, SideControls, EventFeed, HoverTooltip,
     SelectionPanel, SearchPalette, Minimap, Intro, ToastStack, FacilityView,
-    EntityCard, PhotoModeBar, NewsTicker, Onboarding, MobileHint, ui.tsx,
-    Icons.tsx
+    EntityCard, PhotoModeBar, NewsTicker, Onboarding, MobileHint, PlayerHud,
+    ui.tsx, Icons.tsx
     panels/                  Map, Sectors, Transit, Systems, Messages, Profile
 scripts/
   gen-assets.mjs             Dependency-free generator for og-image.png and the
@@ -371,12 +378,82 @@ Each vehicle is drawn as a small isometric box, not a flat quad:
 - **News ticker** (bottom-left): generated headlines from factions, events and
   city stats; click opens MESSAGES. Hidden while a panel/selection is open.
 
-### Onboarding
+### Player citizen avatar
 
-First visit auto-opens the orientation overlay (read the city / open anything /
-follow the small lives / capture & scan + key list). Also reachable via `?`,
-the side-controls info button, and re-opened by clearing `onboardingDone` in
-the persisted progress.
+- Signed-in citizens get a walkable avatar in the world, drawn from their
+  social profile colours (`prof.body` / `prof.visor`) with a facing marker
+  and ground shadow (`CityEngine.drawPlayer`).
+- **Citizen mode** (default): `W A S D` / arrow keys walk the avatar
+  screen-relative (inverse-iso mapped), `Shift` sprints at 6.4 cells/s vs
+  3.2 walking. Movement slides along walls via axis-separated collision
+  against the `buildingMask` occupancy grid, and pauses while any panel,
+  search, help or facility view is open. Double-clicking open ground sets a
+  walk target; any movement key or STOP cancels it. The avatar moves with
+  dominant-axis facing (`CityEngine.updatePlayer(dt)`). Single- and
+  double-clicks use **ground-plane picking** (`groundCell` + `pickLot` over
+  the same mask): a click only selects a building when it lands on that
+  building's lot, so foreground tower silhouettes no longer swallow street
+  clicks. Double-clicking a lot still selects + focuses it. Default spawn is
+  the plaza south of the central spire `(99, 107)` — the spire lot itself is
+  occupied. The SECTORS hotkey moved from `S` to `X` so walking keys never
+  open panels by accident.
+- **Survey mode**: clicks fall back to silhouette hit-testing and camera focus.
+  Toggle with `C`, the PlayerHud MODE button, or `store.togglePlayerMode()`
+  (toasts the change).
+- **PlayerHud** (`components/PlayerHud.tsx`, left rail above the coord rail):
+  PixelCitizen avatar, movement dot, rounded grid coords, mode chip,
+  MODE / STOP buttons and a red **LOG OUT** button. LOG OUT is reachable from four
+  places so it is never hidden: PlayerHud, the TopBar actions cluster, PROFILE >
+  IDENTITY, and the FacilityView header (visible while chatting inside a building,
+  where the fullscreen facility layer covers the HUD). Renders only when the social
+  profile is online;
+  uses per-value selectors so per-frame movement doesn't re-render the HUD
+  more than once per cell.
+- Player state lives in `useCityStore.player` (`PlayerState`: x/y/facing/
+  moving/mode/target/path). Position persists to `localStorage['nexus.player']`
+  via a debounced store subscription (800 ms after the last move) and is
+  restored on boot; targets are clamped to the world grid.
+- The engine imports both stores directly (no `globalThis` bridges); the
+  store imports `CityEngine` as a type only, so there is no runtime cycle.
+
+### Field manual (onboarding)
+
+First visit auto-opens the manual as **WELCOME TO NEXUS** with an
+ENTER THE CITY button; afterwards it is the **FIELD MANUAL**, reachable via
+`?`, the side-controls info button, or the search action `> FIELD MANUAL`.
+Eight tabs — START / MOVE / CAMERA / TERMINAL / CITY LIFE / SOCIAL /
+FACILITY / KEYS — each with a short intro and chip-labelled rows; KEYS is the
+full shortcut rail. Content lives in `components/Onboarding.tsx`
+(`CONTENT` + `KEYS` tables); tab styling is `.manual-*` in `styles.css`.
+Re-open the first-visit flow by clearing `onboardingDone` in the persisted
+progress.
+
+### Facility interiors (floor plans + live occupants)
+
+`engine/interior.ts` generates a deterministic top-down floor plan per
+`(building, floor)`:
+
+- **Archetypes** derived from `building.type`: office, market, industrial,
+  residential, server, entertainment, bio, transit, plus a lobby on floor 1.
+  Each archetype partitions the 28×18 cell grid differently (residential and
+  office split quadrants into rooms; industrial/server/bio stay open halls)
+  and furnishes it with its own vocabulary (desks, stalls, machines, beds,
+  racks, grow beds, stages, benches…). Plans are cached (≤96 entries).
+- **Walkability grid** (`cells`: 0 wall / 1 floor / 2 furniture) with a cross
+  corridor, room doors and optional side doors. NPCs wander it with the same
+  axis-slide collision as the player; clicking an occupant opens a signal
+  readout (name + role) and logs `SIGNAL LOCK`.
+- **Occupant count** scales with `occupants / floors`, a floor factor
+  (lobby ×1.6, roof ×0.5) and a time-of-day curve per archetype (offices peak
+  13:00, residential/entertainment 22:00), clamped 0–24. Night markets are
+  empty; night hab-blocks are full.
+- **Presence avatars**: signed-in visitors whose presence `buildingId`
+  matches the open facility spawn as named wanderers with name tags
+  (`HANDLE (YOU)` for yourself), alongside the simulated occupants.
+- **FacilityView** defaults to FLOOR PLAN with a FLOOR PLAN / SECTION toggle
+  (SECTION keeps the old exterior cross-section). Power off darkens the plan
+  to backup-cell emergency dots; security lockdown seals doors red. The
+  floor directory shows live `SIGNALS` count next to occupancy.
 
 ---
 
@@ -611,8 +688,9 @@ Good places to build next:
 - **Multiplayer presence** — sync camera and selected nodes over WebSocket.
 - **More building styles** — add to `BuildingStyle`, `drawBuilding` switch and
   the personality tables.
-- **Deeper interiors** — `FacilityView` is a separate canvas; add floor plans,
-  NPCs and interactions there.
+- **Deeper interiors** — floor plans + wandering occupants exist
+  (`engine/interior.ts`); next steps are NPC routines (home → work → bar),
+  clickable furniture and player avatar inside the plan.
 - **District-specific rules** — weather, traffic density, event weights and
   audio already key off district; extend them in `data/city.ts` / `events.ts`.
 - **Search indexing** — add aliases, tags and owner names in `SearchPalette`.
@@ -667,7 +745,30 @@ Newer batch, verified live via console/state checks:
 - 390 px and 320 px harness: zero horizontal overflow with the full HUD
   mounted.
 
-Bundle size: ~491 kB JS / ~87 kB CSS (≈150.8 kB / 15.1 kB gzip).
+Bundle size: ~546 kB main JS + ~234 kB lazy Supabase chunk / ~99 kB CSS
+(≈170 kB / 61 kB / 16.8 kB gzip).
+
+Player avatar batch: verified live in browser with a test citizen account
+(sign-in, session restore, intro gate). Confirmed: PlayerHud render (avatar,
+coords, mode, MODE/STOP), double-click street → walk with no stray node panel,
+avatar drawn in-world from profile colours, arrival stops movement, position
+persists across reload (`nexus.player`), `C`/MODE toggles citizen↔survey with
+toast, survey double-click focuses camera without walking, citizen lot-click
+opens the node record (central spire), STOP halts a walk mid-stride.
+`npm run build` compiles clean (tsc + Vite).
+
+Movement / help / interiors batch: verified live in browser with the test
+citizen account. Confirmed: WASD + arrows walk screen-relative (3.2 cells/s,
+Shift sprint 6.4 measured), wall collision stops exactly at lot boundaries,
+`S` no longer opens SECTORS (`X` does), keys clear on keyup/blur and walking
+pauses behind overlays; red LOG OUT on the PlayerHud signs out to the gate
+and sign-in restores the session; `?` opens the eight-tab FIELD MANUAL and
+first visit auto-opens WELCOME TO NEXUS with ENTER THE CITY; facility view
+defaults to FLOOR PLAN with distinct lobby / market / residential layouts,
+occupants visibly wander between frames, clicking one opens the signal
+readout, signed-in presence appears as `HANDLE (YOU)`, floor strip swaps
+layouts, SECTION toggle restores the cross-section, and cutting power dims
+the plan to emergency dots with `SIGNALS`/`DARK` readouts.
 
 ---
 
@@ -692,6 +793,8 @@ Ideas for next iterations, ordered by value for effort.
 - [x] Player-triggered events (district blackout, festival, rain, transit hold,
       mesh stress, haze vent) with visible skyline effects + `>` command variants
 - [x] Goals / missions — six OBJECTIVES in PROFILE using discovery/tracking state
+- [x] Player citizen avatar — profile-coloured walker, citizen/survey modes (`C`),
+      click-to-move, persisted position (`nexus.player`)
 - [x] Seed picker to generate different cities (reverted — same decision as above)
 
 ### Visual
@@ -718,7 +821,7 @@ The social mesh is Supabase-backed and fully optional.
 - `src/social/types.ts` — domain types: `SocialProfile`, `PresenceEntry`, `BuildingChannelMessage`, `DirectThreadMessage`.
 - `src/social/useSocialStore.ts` — Zustand store: auth (signUp/signIn/signOut), profile CRUD, presence on channel `nexus-city`, per-building broadcast channels `building:<id>`, DM channels `dm:<pair>`, DB history fallback for messages.
 - `src/social/PixelCitizen.tsx` — SVG avatar parameterized by suit colour, visor colour, build 0–2.
-- `src/components/AccountSection.tsx` — PROFILE > ACCOUNT UI (offline notice, sign-up/sign-in, wardrobe, rename, unlink).
+- `src/components/AccountSection.tsx` — PROFILE > ACCOUNT UI (offline notice, sign-up/sign-in, wardrobe, rename, log out).
 - `src/components/FacilityChannel.tsx` — FACILITY interior floor channel (occupants + live thread).
 - `src/components/DirectsSection.tsx` — MESSAGES > DIRECTS (operator roster + 1:1 threads).
 - `supabase/schema.sql` — `profiles`, `building_messages`, `direct_messages` + RLS (public reads on profiles/building_messages, participants-only on DMs).
@@ -746,8 +849,13 @@ VITE_SUPABASE_PUBLISHABLE_KEY=YOUR_PUBLISHABLE_KEY   # or VITE_SUPABASE_ANON_KEY
 **Authentication → URL Configuration:** set **Site URL** to the production domain and add
 both `https://your-app.vercel.app/**` and `http://localhost:4173/**` to **Redirect URLs**.
 Sign-up passes `emailRedirectTo` = the current origin, so the origin you sign up from must
-be allow-listed or Supabase falls back to the Site URL. Email confirmation can stay on;
-the handle chosen at sign-up is stored locally and claimed after confirmation.
+be allow-listed or Supabase falls back to the Site URL. Email confirmation can stay on.
+The chosen handle is sent in `signUp` `options.data.handle` (Supabase `user_metadata`)
+**and** stashed in `localStorage['nexus.pendingHandle']`; on first authenticated boot the
+profile bootstrap tries pending → `user_metadata.handle` → email-prefix fallback, so the
+handle survives confirmation on another device/origin (localStorage alone would not).
+Chat / presence always display the citizen **handle**, never the email; rename it in
+PROFILE > IDENTITY > CITIZEN HANDLE.
 
 **What you get when live**
 
@@ -761,7 +869,7 @@ the handle chosen at sign-up is stored locally and claimed after confirmation.
 ### Bigger features
 - [x] Live citizen accounts + per-building floor channels + 1:1 DMs — **Supabase Realtime**
   (offline graceful degrade; no backend server required)
-- [ ] Interactive facility interiors with NPCs and floor plans
+- [x] Interactive facility interiors with NPCs and floor plans
 
 ## Deployment (Vercel)
 
@@ -773,3 +881,113 @@ the handle chosen at sign-up is stored locally and claimed after confirmation.
   `node scripts/gen-assets.mjs` if you change the brand art
 - Optional `vercel.json` for SPA rewrite and asset caching
 - Windows note: if PowerShell blocks `npm`, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` or use `npm.cmd`
+
+
+
+## Roadmap: Extended Ideas
+
+### Simulation depth
+- [ ] **Economy** — district income, power demand and supply that affect each other
+- [ ] **Cascading events** — blackout → traffic jams → crime spike → stability drop
+- [ ] **Population cycles** — commuters fill corporate districts by day, entertainment by night
+- [ ] **Persistent NPCs with routines** (home → work → bar), click to follow one
+- [ ] **Crime / security layer** with patrol drones
+- [ ] **Weather variety + forecast** — fog / storm / heat-haze types plus a SYSTEMS
+  forecast strip; weather shifts foot traffic and power draw
+- [ ] **Building lifecycle** — scaffolds / under-construction and condemned vacant
+  towers that light up again when repaired
+- [ ] **Traffic depth** — intersection congestion, rush-hour density, accidents that
+  block a road until a civic crew clears them
+
+### World
+- [ ] **Underground layers** — sewers, metro tunnels, black market zone
+- [ ] **Cavern lighting** — artificial sun panels that dim and flicker
+- [ ] **Seasonal / special events** — festival lights, lockdown
+- [ ] **Rail view toggle** — ground-level vs. elevated
+- [ ] **Rideable transit** — board a train/tram and ride the loop in a carriage
+  camera; timetable + line diagram in TRANSIT
+- [ ] **Street-level interactables** — vending machines, noodle stalls and public
+  terminals the avatar can use for small buffs / lore
+- [ ] **Reactive signage** — billboards and holograms respond to live events and
+  stats (blackout → emergency broadcast, festival → sponsor ads)
+
+### Audio
+- [ ] **Spatial audio** — louder near markets, quieter in residential zones
+- [ ] **Event stingers** — alarm on outage, thunder in rain
+- [ ] **Music layers** that shift with district and time of day
+- [ ] **Volume mixer** — separate ambient / music / UI / chat sliders in SETTINGS,
+  persisted with the rest of the preferences
+
+### Tech / quality
+- [ ] Move rendering to an **OffscreenCanvas worker** to free the main thread
+- [ ] **Chunked pedestrian updates** (dirty-region approach, see Performance notes)
+- [ ] **Tests for `generateCity()`** — same seed must produce identical output
+- [ ] **GitHub Actions** — build and type-check on every push
+- [ ] **Error boundary** with a themed "SYSTEM FAULT" screen
+- [ ] **Accessibility** — keyboard focus styles on the HUD, ARIA labels, colorblind-safe palette option
+- [ ] **PWA offline shell** — service worker caches fonts + app shell so the city
+  boots offline (social layer degrades gracefully)
+- [ ] **Save export / import** — download / restore the progress JSON to back up or
+  move a citizen between browsers
+- [ ] **Bundle split** — lazy-load panels and the interior renderer to cut the
+  >500 kB main chunk flagged by the build
+- [ ] **i18n scaffold** — central string table so HUD / manual can be localized
+
+### Social / community
+- [ ] **Friends + follow** — friend list with online status and a jump-to-friend camera
+- [ ] **Citizen profile cards** — click a presence head to see wardrobe, handle,
+  faction and joined date; visit their avatar in the world
+- [ ] **DM unread badges + typing indicator** — nav badge, per-thread unread counts
+  and a live "…is typing" line
+- [ ] **Reactions + emotes** — quick reacts on floor/DM messages and an avatar emote
+  wheel (wave / dance / sit)
+- [ ] **Moderation** — report / mute / block a citizen; server-side chat rate limit
+- [ ] **Faction channels + missions** — join a faction, faction-only chat and
+  standing-gated dispatch missions
+
+### Account / auth
+- [ ] **Forgot password / reset** — email reset flow from the gate
+- [ ] **Self-service account** — change email / password and delete account in
+  SETTINGS > ACCOUNT
+- [ ] **OAuth providers** — optional Google / Discord sign-in beside email
+- [ ] **Session expiry handling** — graceful re-auth prompt instead of a silent drop
+  back to the gate
+
+### Player & interiors
+- [ ] **Walk into buildings** — the avatar enters a facility on foot and walks the
+  floor plan (interior collision + NPC avoidance)
+- [ ] **NPC dialogue** — click an interior NPC for a short branching conversation /
+  lore / quest hook
+- [ ] **Elevator transitions** — animated lift ride between floors instead of an
+  instant swap
+- [ ] **Click-to-walk pathfinding** — A* around building lots instead of axis-slide
+- [ ] **Interior interactions** — sit at a desk, use a terminal, buy from a stall;
+  small persistent state changes
+- [ ] **Gamepad + mobile joystick** — controller support and an on-screen stick for
+  touch walking
+
+### UX / settings & mobile
+- [ ] **Settings depth** — audio mixer, UI scale, keybind remap, graphics and
+  reduced-motion in one SETTINGS panel
+- [ ] **Notification history** — a reopenable log of toasts / events in MESSAGES
+- [ ] **Searchable manual + codex** — filter box across field-manual tabs and codex
+- [ ] **Vantage thumbnails + rename** — preview image and editable name for saved
+  vantages
+- [ ] **Photo filters + gallery** — CRT / scanline / VHS looks and a local gallery of
+  exported shots
+- [ ] **Guided first-run tour** — objective-driven tutorial that completes the first
+  goals
+
+### Progression
+- [ ] **Daily / weekly challenges** — rotating objectives with cosmetic rewards
+- [ ] **Cosmetic unlocks** — suits / visors / trails earned via goals, codex and
+  faction standing
+- [ ] **Leaderboard** — opt-in civic ranking (discoveries, goals) via Supabase
+
+### Suggested priority
+1. Economy + cascading events (makes the city feel alive)
+2. Walk into buildings + NPC dialogue (payoff for the interior system)
+3. DM unread badges + friends (makes the social layer sticky)
+4. Forgot password / self-service account (removes real auth friction)
+5. OffscreenCanvas worker
+6. CI build and type-check

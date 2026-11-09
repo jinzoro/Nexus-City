@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CityData } from './types'
 import { CityEngine } from './engine/CityEngine'
-import { generateCity, getDistrict, CITY_SEED_DEFAULT } from './data/city'
+import { generateCity, getDistrict, CITY_SEED_DEFAULT, TILE_W, TILE_H } from './data/city'
 import { createRandomEvent } from './data/events'
 import { ambient } from './audio/ambient'
 import { useCityStore } from './state/useCityStore'
@@ -333,6 +333,13 @@ export default function App() {
 
   // Keyboard shortcuts
   useEffect(() => {
+    const MOVE_KEYS: Record<string, 'up' | 'down' | 'left' | 'right' | 'sprint'> = {
+      w: 'up', arrowup: 'up',
+      s: 'down', arrowdown: 'down',
+      a: 'left', arrowleft: 'left',
+      d: 'right', arrowright: 'right',
+      shift: 'sprint',
+    }
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null
       const typing = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA'
@@ -357,25 +364,58 @@ export default function App() {
         return
       }
 
-      const panels = { m: 'map', s: 'sectors', t: 'transit', y: 'systems', n: 'messages', p: 'profile', g: 'settings' } as const
+      const move = MOVE_KEYS[key]
+      if (move) {
+        if (key.startsWith('arrow')) event.preventDefault()
+        if (state.player.mode === 'citizen') state.setMoveKey(move, true)
+        return
+      }
+
+      const panels = { m: 'map', x: 'sectors', t: 'transit', y: 'systems', n: 'messages', p: 'profile', g: 'settings' } as const
       if (key in panels) {
+        state.clearMoveKeys()
         state.togglePanel(panels[key as keyof typeof panels])
         return
       }
       if (key === 'o') state.engine?.overview()
-      if (key === 'f') state.togglePhotoMode()
+      if (key === 'c') { state.clearMoveKeys(); state.togglePlayerMode() }
+      if (key === 'f') { state.clearMoveKeys(); state.togglePhotoMode() }
       if (key === 'v') state.toggleScanMode()
-      if (key === '?') state.setHelpOpen(!state.helpOpen)
+      if (key === 'b' && state.photoMode) {
+        const cam = state.camera
+        const cx = cam.x / TILE_W + cam.y / TILE_H
+        const cy = cam.y / TILE_H - cam.x / TILE_W
+        state.addBookmark({
+          name: `${getDistrict(cam.district).code} / ${Math.round(cx)}:${Math.round(cy)}`,
+          x: cx,
+          y: cy,
+          zoom: cam.zoom,
+          district: cam.district,
+        })
+      }
+      if (key === '?') { state.clearMoveKeys(); state.setHelpOpen(!state.helpOpen) }
       if (key === '0') state.engine?.resetView()
       if (key === '+' || key === '=') state.engine?.zoomBy(1.32)
       if (key === '-') state.engine?.zoomBy(1 / 1.32)
       if (key === '/') {
         event.preventDefault()
+        state.clearMoveKeys()
         state.setSearchOpen(true)
       }
     }
+    const onKeyUp = (event: KeyboardEvent) => {
+      const move = MOVE_KEYS[event.key.toLowerCase()]
+      if (move) useCityStore.getState().setMoveKey(move, false)
+    }
+    const onBlur = () => useCityStore.getState().clearMoveKeys()
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onBlur)
+    }
   }, [])
 
   return (

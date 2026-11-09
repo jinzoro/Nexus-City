@@ -4,6 +4,7 @@ import { useCityStore } from '../state/useCityStore'
 import { useSocialStore, BODY_SWATCHES, VISOR_SWATCHES } from '../social/useSocialStore'
 import { PixelCitizen } from '../social/PixelCitizen'
 import { SectionLabel } from './ui'
+import { Icon } from './Icons'
 
 /**
  * ACCOUNT / IDENTITY block shown in the PROFILE panel. Handles Supabase
@@ -27,6 +28,7 @@ export function AccountSection() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [handle, setHandle] = useState('')
+  const setPanel = useCityStore((s) => s.setPanel)
 
   useEffect(() => {
     void init()
@@ -51,7 +53,6 @@ export function AccountSection() {
   }
 
   if (status === 'online' && profile) {
-    const setPanel = useCityStore(s => s.setPanel)
     return (
       <>
         <SectionLabel>IDENTITY</SectionLabel>
@@ -62,7 +63,9 @@ export function AccountSection() {
               <strong>{profile.handle}</strong>
               <span>CITIZEN · LINKED</span>
             </div>
-            <button className="mini-btn" onClick={() => void signOut()}>UNLINK</button>
+            <button className="mini-btn account__logout" onClick={() => void signOut()} title="Log out of NEXUS">
+              <Icon name="logout" size={11} /> LOG OUT
+            </button>
             <button className="mini-btn" onClick={() => setPanel('settings')}>SETTINGS</button>
           </div>
 
@@ -106,6 +109,7 @@ export function AccountSection() {
           </div>
 
           <div className="account__row">
+            <span className="account__label">CITIZEN HANDLE</span>
             <input
               className="account__input"
               value={handle}

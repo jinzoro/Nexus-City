@@ -35,6 +35,8 @@ import {
 } from './dynamicRenderer'
 import { renderForeground, renderGround } from './groundRenderer'
 import { type Camera, type View, clamp, getBuildingBounds, isBoundsVisible, isPointInBounds, project } from './renderUtils'
+import { useCityStore } from '../state/useCityStore'
+import { useSocialStore } from '../social/useSocialStore'
 
 interface EngineCallbacks {
   onHover?: (building: Building | null, clientX: number, clientY: number) => void
@@ -116,7 +118,6 @@ export class CityEngine {
   private vehicleMap: Map<string, import('../types').Vehicle>
   private trainMap: Map<string, import('../types').Train>
   private buildingMask: Uint8Array | null = null
-  private playerTick = 0
   private dwellMap = new Map<string, number>()
   private stationMap = new Map<string, number[]>()
   private pointers = new Map<number, PointerInfo>()
@@ -259,7 +260,7 @@ export class CityEngine {
     this.view.time = this.time
     this.runFpsWatch(now)
     this.update(dt)
-    this.updatePlayer()
+    this.updatePlayer(dt)
     // Sync the atmosphere section of the view before any layer rendering.
     this.view.daylight = this.daylight
     this.view.weather = this.weather
@@ -333,53 +334,78 @@ export class CityEngine {
     }
   }
 
-  private updatePlayer() {
-    try {
-      const store = (globalThis as any).useCityStore
-      if (!store || typeof store.getState !== 'function') return
-      const s = store.getState()
-      const p = s.player
-      if (!p.moving || !p.target) return
+  private blockedAt(x: number, y: number) {
+    const size = this.city.size
+    if (x < 0 || y < 0 || x >= size || y >= size) return true
+    return this.buildingMask?.[Math.floor(y) * size + Math.floor(x)] === 1
+  }
+
+  private updatePlayer(dt: number) {
+    const s = useCityStore.getState()
+    const p = s.player
+    if (p.mode !== 'citizen') return
+    if (s.facilityOpen || s.searchOpen || s.helpOpen || s.activePanel) return
+    const k = s.moveKeys
+    const sx = (k.right ? 1 : 0) - (k.left ? 1 : 0)
+    const sy = (k.down ? 1 : 0) - (k.up ? 1 : 0)
+    const speed = (k.sprint ? 6.4 : 3.2) * dt
+    let vx = 0
+    let vy = 0
+    if (sx !== 0 || sy !== 0) {
+      // screen-relative direction mapped through the inverse iso projection
+      const wx = sx / TILE_W + sy / TILE_H
+      const wy = sy / TILE_H - sx / TILE_W
+      const len = Math.hypot(wx, wy) || 1
+      vx = (wx / len) * speed
+      vy = (wy / len) * speed
+    } else if (p.moving && p.target) {
       const dx = p.target.x - p.x
       const dy = p.target.y - p.y
       const dist = Math.hypot(dx, dy)
-      const speed = 0.8
-      const step = speed * 0.016
-      if (dist <= step) {
-        store.setState((prev: any) => ({ player: { ...prev.player, x: p.target.x, y: p.target.y, moving: false, target: null, path: [] } }))
-      } else {
-        const nx = p.x + dx / dist * step
-        const ny = p.y + dy / dist * step
-        const facing = dx > 0 ? 'right' : dx < 0 ? 'left' : dy > 0 ? 'down' : 'up'
-        store.setState((prev: any) => ({ player: { ...prev.player, x: nx, y: ny, facing } }))
+      if (dist <= speed) {
+        useCityStore.setState({ player: { ...p, x: p.target.x, y: p.target.y, moving: false, target: null, path: [] } })
+        return
       }
-    } catch { /* no-op */ }
+      vx = (dx / dist) * speed
+      vy = (dy / dist) * speed
+    } else {
+      if (p.moving) useCityStore.setState({ player: { ...p, moving: false } })
+      return
+    }
+    // axis-separated slide against building lots
+    let nx = p.x
+    let ny = p.y
+    if (!this.blockedAt(p.x + vx, p.y)) nx = p.x + vx
+    if (!this.blockedAt(nx, p.y + vy)) ny = p.y + vy
+    if (nx === p.x && ny === p.y) {
+      useCityStore.setState({ player: { ...p, moving: false, target: null } })
+      return
+    }
+    const facing = Math.abs(nx - p.x) > Math.abs(ny - p.y) ? (nx > p.x ? 'right' : 'left') : ny > p.y ? 'down' : 'up'
+    useCityStore.setState({ player: { ...p, x: nx, y: ny, facing, moving: true, target: sx !== 0 || sy !== 0 ? null : p.target } })
   }
 
   private drawPlayer(ctx: CanvasRenderingContext2D) {
-    try {
-      const store = (globalThis as any).useCityStore
-      const social = (globalThis as any).useSocialStore
-      if (!store || !social) return
-      const s = store.getState()
-      const prof = social.getState().profile
-      if (!prof) return
-      const p = s.player
-      const pt = project(this.view, p.x, p.y, 0.5)
-      const x = Math.round(pt[0]) - 6
-      const y = Math.round(pt[1]) - 14
-      ctx.save()
-      ctx.fillStyle = prof.body
-      ctx.fillRect(x, y, 12, 10)
-      ctx.fillStyle = prof.visor
-      ctx.fillRect(x + 2, y + 2, 8, 2)
-      ctx.fillStyle = '#8ff8ff'
-      if (p.facing === 'up') ctx.fillRect(x + 4, y - 2, 4, 2)
-      if (p.facing === 'down') ctx.fillRect(x + 4, y + 12, 4, 2)
-      if (p.facing === 'left') ctx.fillRect(x - 2, y + 4, 2, 4)
-      if (p.facing === 'right') ctx.fillRect(x + 12, y + 4, 2, 4)
-      ctx.restore()
-    } catch { /* no-op */ }
+    const prof = useSocialStore.getState().profile
+    if (!prof) return
+    const p = useCityStore.getState().player
+    const pt = project(this.view, p.x, p.y, 0.5)
+    const x = Math.round(pt[0]) - 6
+    const y = Math.round(pt[1]) - 14
+    if (x < -20 || y < -20 || x > this.width + 20 || y > this.height + 20) return
+    ctx.save()
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'
+    ctx.fillRect(x + 1, y + 13, 10, 2)
+    ctx.fillStyle = prof.body
+    ctx.fillRect(x, y, 12, 10)
+    ctx.fillStyle = prof.visor
+    ctx.fillRect(x + 2, y + 2, 8, 2)
+    ctx.fillStyle = '#8ff8ff'
+    if (p.facing === 'up') ctx.fillRect(x + 4, y - 2, 4, 2)
+    if (p.facing === 'down') ctx.fillRect(x + 4, y + 12, 4, 2)
+    if (p.facing === 'left') ctx.fillRect(x - 2, y + 4, 2, 4)
+    if (p.facing === 'right') ctx.fillRect(x + 12, y + 4, 2, 4)
+    ctx.restore()
   }
 
   private update(dt: number) {
@@ -638,7 +664,13 @@ export class CityEngine {
           this.callbacks.onSelectEntity?.(hit.profile)
         } else {
           this.selectedEntity = null
-          const b = this.hitTest(pointer.x, pointer.y)
+          let b: Building | null
+          if (useCityStore.getState().player.mode === 'citizen') {
+            const { cellX, cellY } = this.groundCell(pointer.x, pointer.y)
+            b = this.pickLot(cellX, cellY)
+          } else {
+            b = this.hitTest(pointer.x, pointer.y)
+          }
           this.selected = b
           this.callbacks.onSelectEntity?.(null)
           this.callbacks.onSelect?.(b)
@@ -664,31 +696,26 @@ export class CityEngine {
       this.focusEntity(hit.kind, hit.id, true)
       return
     }
+    const { cellX, cellY } = this.groundCell(x, y)
+    if (useCityStore.getState().player.mode === 'citizen') {
+      // Ground-plane picking: tower silhouettes must not swallow street clicks.
+      const lot = this.pickLot(cellX, cellY)
+      if (lot) {
+        this.selected = lot
+        this.callbacks.onSelect?.(lot)
+        this.focusBuilding(lot, Math.max(1.25, this.camera.zoom * 1.8))
+      } else {
+        useCityStore.getState().playerMoveTo(cellX, cellY)
+      }
+      return
+    }
     const b = this.hitTest(x, y)
     if (b) {
       this.selected = b
       this.callbacks.onSelect?.(b)
       this.focusBuilding(b, Math.max(1.25, this.camera.zoom * 1.8))
     } else {
-      const worldX = this.camera.x + (x - this.width / 2) / this.camera.zoom
-      const worldY = this.camera.y + (y - this.height / 2) / this.camera.zoom
-      const cellX = worldX / TILE_W + worldY / TILE_H
-      const cellY = worldY / TILE_H - worldX / TILE_W
-      try {
-        const store = (globalThis as any).useCityStore
-        if (store && typeof store.getState === 'function') {
-          const s = store.getState()
-          if (s && s.player && s.player.mode === 'citizen') {
-            s.playerMoveTo(cellX, cellY)
-          } else {
-            this.focusCell(cellX, cellY, clamp(this.camera.zoom * 1.8, MIN_ZOOM, MAX_ZOOM))
-          }
-        } else {
-          this.focusCell(cellX, cellY, clamp(this.camera.zoom * 1.8, MIN_ZOOM, MAX_ZOOM))
-        }
-      } catch {
-        this.focusCell(cellX, cellY, clamp(this.camera.zoom * 1.8, MIN_ZOOM, MAX_ZOOM))
-      }
+      this.focusCell(cellX, cellY, clamp(this.camera.zoom * 1.8, MIN_ZOOM, MAX_ZOOM))
     }
   }
 
@@ -885,6 +912,21 @@ export class CityEngine {
 
   captureFrame() {
     return this.canvas.toDataURL('image/png')
+  }
+
+  private groundCell(x: number, y: number) {
+    const worldX = this.camera.x + (x - this.width / 2) / this.camera.zoom
+    const worldY = this.camera.y + (y - this.height / 2) / this.camera.zoom
+    return { cellX: worldX / TILE_W + worldY / TILE_H, cellY: worldY / TILE_H - worldX / TILE_W }
+  }
+
+  private pickLot(cellX: number, cellY: number): Building | null {
+    const size = this.city.size
+    const cx = Math.floor(cellX)
+    const cy = Math.floor(cellY)
+    if (cx < 0 || cy < 0 || cx >= size || cy >= size) return null
+    if (this.buildingMask?.[cy * size + cx] !== 1) return null
+    return this.city.buildings.find((b) => cellX >= b.x && cellX < b.x + b.w && cellY >= b.y && cellY < b.y + b.d) ?? null
   }
 
   private hitTest(x: number, y: number): Building | null {

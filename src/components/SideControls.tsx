@@ -72,8 +72,8 @@ export function SideControls() {
         <button
           className={`side-btn ${helpOpen ? 'side-btn--active' : ''}`}
           onClick={() => setHelpOpen(!helpOpen)}
-          title="Orientation [?]"
-          aria-label="Open orientation"
+          title="Field manual [?]"
+          aria-label="Open field manual"
         >
           <Icon name="info" size={16} />
         </button>

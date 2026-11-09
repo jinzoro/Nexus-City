@@ -17,6 +17,7 @@ import type { CityEngine } from '../engine/CityEngine'
 import { ambient } from '../audio/ambient'
 import { defaultBookmarks, GOALS, createNewsItem } from '../data/world'
 import { createEventForType } from '../data/events'
+import { WORLD_SIZE } from '../data/city'
 
 export type PanelId = 'map' | 'sectors' | 'transit' | 'systems' | 'messages' | 'profile' | 'settings' | null
 
@@ -129,6 +130,26 @@ const initialStats: CityStats = {
   temperature: 19,
 }
 
+export type PlayerMode = 'citizen' | 'survey'
+
+export interface MoveKeys {
+  up: boolean
+  down: boolean
+  left: boolean
+  right: boolean
+  sprint: boolean
+}
+
+interface PlayerState {
+  x: number
+  y: number
+  facing: 'left' | 'right' | 'up' | 'down'
+  moving: boolean
+  mode: PlayerMode
+  target: { x: number; y: number } | null
+  path: { x: number; y: number }[]
+}
+
 interface CityStore {
   engine: CityEngine | null
   setEngine: (engine: CityEngine | null) => void
@@ -140,6 +161,15 @@ interface CityStore {
 
   camera: CameraState
   setCamera: (camera: CameraInfo) => void
+
+  player: PlayerState
+  setPlayer: (p: Partial<PlayerState>) => void
+  playerMoveTo: (x: number, y: number) => void
+  playerStop: () => void
+  togglePlayerMode: () => void
+  moveKeys: MoveKeys
+  setMoveKey: (key: keyof MoveKeys, on: boolean) => void
+  clearMoveKeys: () => void
 
   hoveredId: string | null
   hoverX: number
@@ -309,6 +339,28 @@ const seedLog: LogEntry[] = [
   },
 ]
 
+const savedPlayer = (() => {
+  try {
+    const raw = window.localStorage.getItem('nexus.player')
+    const parsed = raw ? JSON.parse(raw) : null
+    return parsed && typeof parsed.x === 'number' && typeof parsed.y === 'number' ? parsed : null
+  } catch {
+    return null
+  }
+})()
+
+const clampCell = (v: number) => Math.max(0, Math.min(WORLD_SIZE, v))
+
+const defaultPlayer: PlayerState = {
+  x: savedPlayer?.x ?? 99,
+  y: savedPlayer?.y ?? 107,
+  facing: 'down',
+  moving: false,
+  mode: 'citizen',
+  target: null,
+  path: [],
+}
+
 export const useCityStore = create<CityStore>()((set, get) => ({
   engine: null,
   setEngine: (engine) => set({ engine }),
@@ -325,6 +377,30 @@ export const useCityStore = create<CityStore>()((set, get) => ({
 
   camera: initialCamera,
   setCamera: (camera) => set({ camera }),
+
+  player: defaultPlayer,
+  setPlayer: (p) => set((s) => ({ player: { ...s.player, ...p } })),
+  playerMoveTo: (x, y) =>
+    set((s) => ({
+      player: {
+        ...s.player,
+        target: { x: clampCell(x), y: clampCell(y) },
+        moving: true,
+      },
+    })),
+  playerStop: () => set((s) => ({ player: { ...s.player, moving: false, target: null, path: [] } })),
+  moveKeys: { up: false, down: false, left: false, right: false, sprint: false },
+  setMoveKey: (key, on) => set((s) => (s.moveKeys[key] === on ? s : { moveKeys: { ...s.moveKeys, [key]: on } })),
+  clearMoveKeys: () => set({ moveKeys: { up: false, down: false, left: false, right: false, sprint: false } }),
+  togglePlayerMode: () => {
+    const mode = get().player.mode === 'citizen' ? 'survey' : 'citizen'
+    set((s) => ({ player: { ...s.player, mode, moving: false, target: null } }))
+    get().pushToast({
+      title: mode === 'citizen' ? 'CITIZEN MODE' : 'SURVEY MODE',
+      message: mode === 'citizen' ? 'Double-click open ground to walk your citizen there.' : 'Double-click focuses the camera instead of walking.',
+      severity: 'info',
+    })
+  },
 
   hoveredId: null,
   hoverX: 0,
@@ -620,3 +696,16 @@ export const useCityStore = create<CityStore>()((set, get) => ({
     return event
   },
 }))
+
+let playerPersistTimer = 0
+useCityStore.subscribe((state, prev) => {
+  if (state.player === prev.player) return
+  window.clearTimeout(playerPersistTimer)
+  playerPersistTimer = window.setTimeout(() => {
+    try {
+      const p = useCityStore.getState().player
+      window.localStorage.setItem('nexus.player', JSON.stringify({ x: p.x, y: p.y }))
+    } catch { /* storage unavailable */ }
+  }, 800)
+})
+

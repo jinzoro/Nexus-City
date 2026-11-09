@@ -154,8 +154,8 @@ export function SearchPalette() {
       },
       {
         id: 'cmd-help',
-        label: 'ORIENTATION',
-        detail: 'Reopen the controls and interaction guide',
+        label: 'FIELD MANUAL',
+        detail: 'Open the tabbed help manual (?)',
         icon: 'info',
         color: '#8ff8ff',
         run: () => state.setHelpOpen(true),

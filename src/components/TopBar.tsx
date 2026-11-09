@@ -39,6 +39,7 @@ export function TopBar() {
   const overlay = useCityStore((s) => s.overlay)
   const setPanel = useCityStore((s) => s.setPanel)
   const { profile, status } = useSocialStore()
+  const signOut = useSocialStore((s) => s.signOut)
   const setOverlay = useCityStore((s) => s.setOverlay)
   const photoMode = useCityStore((s) => s.photoMode)
   const scanMode = useCityStore((s) => s.scanMode)
@@ -142,6 +143,11 @@ export function TopBar() {
           >
             <Icon name={audioEnabled ? 'audio' : 'audio-off'} size={17} />
           </button>
+          {status === 'online' && profile ? (
+            <button className="icon-btn" onClick={() => void signOut()} title="Log out of NEXUS" aria-label="Log out">
+              <Icon name="logout" size={17} />
+            </button>
+          ) : null}
         </div>
       </div>
     </header>

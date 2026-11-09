@@ -1,8 +1,20 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { MouseEvent } from 'react'
 import type { Building } from '../types'
 import { getDistrict } from '../data/city'
-import { CROWN_LABELS, FACADE_LABELS, STREET_LABELS } from '../data/personality'
+import { CROWN_LABELS, STREET_LABELS } from '../data/personality'
 import { useCityStore } from '../state/useCityStore'
+import { useSocialStore } from '../social/useSocialStore'
+import {
+  buildFloorPlan,
+  drawFloorPlan,
+  spawnNpcs,
+  stepNpcs,
+  PLAN_CELL,
+  PLAN_OX,
+  PLAN_OY,
+  type Npc,
+} from '../engine/interior'
 import { formatNumber, Meter, SectionLabel, StatusBadge, statusColor } from './ui'
 import { Icon } from './Icons'
 import { FacilityChannel } from './FacilityChannel'
@@ -330,7 +342,23 @@ export function FacilityView() {
   const [comms, setComms] = useState(true)
   const [logs, setLogs] = useState<string[]>([])
   const [floor, setFloor] = useState(0)
+  const [view, setView] = useState<'plan' | 'section'>('plan')
+  const [npcInfo, setNpcInfo] = useState<Npc | null>(null)
+  const [signals, setSignals] = useState(0)
+  const npcsRef = useRef<Npc[]>([])
+  const presence = useSocialStore((s) => s.presence)
+  const myId = useSocialStore((s) => s.profile?.id ?? null)
+  const signOut = useSocialStore((s) => s.signOut)
   const building = getBuilding(selectedId)
+  const totalFloors = building ? Math.min(24, Math.max(6, Math.round(building.floors))) : 6
+  const visitors = useMemo(
+    () =>
+      presence
+        .filter((p) => building && p.buildingId === building.id)
+        .map((p) => ({ name: p.handle, body: p.body, visor: p.visor, self: p.userId === myId })),
+    [presence, building, myId],
+  )
+  const visitorsKey = visitors.map((v) => `${v.name}:${v.self}`).join('|')
 
   useEffect(() => {
     if (!building) return
@@ -347,6 +375,16 @@ export function FacilityView() {
   }, [building])
 
   useEffect(() => {
+    if (!open || !building || view !== 'plan') return
+    const plan = buildFloorPlan(building, floor)
+    const npcs = spawnNpcs(plan, building, floor, totalFloors, new Date().getHours(), visitors)
+    npcsRef.current = npcs
+    setSignals(npcs.filter((n) => !n.visitor).length)
+    setNpcInfo(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, building, floor, view, totalFloors, visitorsKey])
+
+  useEffect(() => {
     if (!open || !building) return
     const canvas = canvasRef.current
     if (!canvas) return
@@ -358,21 +396,29 @@ export function FacilityView() {
     canvas.width = width * scale
     canvas.height = height * scale
     ctx.imageSmoothingEnabled = false
+    const plan = view === 'plan' ? buildFloorPlan(building, floor) : null
     let raf = 0
+    let last = performance.now()
     const draw = (now: number) => {
+      const dt = Math.min(0.1, (now - last) / 1000)
+      last = now
       ctx.setTransform(scale, 0, 0, scale, 0, 0)
-      drawScene(ctx, building, now / 1000, width, height, floor)
+      if (plan) {
+        stepNpcs(npcsRef.current, plan, dt, building.seed + floor * 7)
+        drawFloorPlan(ctx, plan, building, npcsRef.current, { width, height, time: now / 1000, power, security, floor })
+      } else {
+        drawScene(ctx, building, now / 1000, width, height, floor)
+      }
       raf = requestAnimationFrame(draw)
     }
     raf = requestAnimationFrame(draw)
     return () => cancelAnimationFrame(raf)
-  }, [open, building, floor])
+  }, [open, building, floor, view, power, security])
 
   if (!open || !building) return null
   const district = getDistrict(building.district)
   const color = statusColor(building.status)
   const isTracked = tracked.includes(building.id)
-  const totalFloors = Math.min(24, Math.max(6, Math.round(building.floors)))
   const roomFor = (index: number) => {
     if (index === 0) return STREET_LABELS[building.street]
     if (index === totalFloors - 1) return CROWN_LABELS[building.crown]
@@ -383,6 +429,26 @@ export function FacilityView() {
 
   const log = (line: string) => {
     setLogs((prev) => [...prev.slice(-5), `> ${line}`])
+  }
+
+  const onCanvasClick = (e: MouseEvent<HTMLCanvasElement>) => {
+    if (view !== 'plan') return
+    const rect = e.currentTarget.getBoundingClientRect()
+    const cx = ((e.clientX - rect.left) / rect.width) * 640
+    const cy = ((e.clientY - rect.top) / rect.height) * 460
+    const gx = (cx - PLAN_OX) / PLAN_CELL
+    const gy = (cy - PLAN_OY) / PLAN_CELL
+    let best: Npc | null = null
+    let bestD = 1
+    for (const n of npcsRef.current) {
+      const d = Math.hypot(n.x - gx, n.y - gy)
+      if (d < bestD) {
+        bestD = d
+        best = n
+      }
+    }
+    setNpcInfo(best)
+    if (best) log(`SIGNAL LOCK // ${best.name} // ${best.role}`)
   }
 
   const toggle = (kind: 'power' | 'security' | 'comms') => {
@@ -416,6 +482,9 @@ export function FacilityView() {
             <span className="facility-access">
               <span className="live-dot" /> ACCESS GRANTED
             </span>
+            <button className="icon-btn icon-btn--small" onClick={() => void signOut()} title="Log out of NEXUS" aria-label="Log out">
+              <Icon name="logout" size={15} />
+            </button>
             <button className="icon-btn icon-btn--small" onClick={closeFacility} title="Exit facility [Esc]">
               <Icon name="close" size={15} />
             </button>
@@ -424,11 +493,35 @@ export function FacilityView() {
 
         <div className="facility-body">
           <div className="facility-visual">
-            <canvas ref={canvasRef} className="facility-canvas" />
+            <canvas
+              ref={canvasRef}
+              className={`facility-canvas ${view === 'plan' ? 'facility-canvas--plan' : ''}`}
+              onClick={onCanvasClick}
+            />
             <div className="facility-visual__hud">
-              <span>ARCHIVE FEED</span>
-              <span>CAM 04 / EAST FACE</span>
+              <span>{view === 'plan' ? 'LIVE FLOOR FEED' : 'ARCHIVE FEED'}</span>
+              <div className="facility-view-toggle">
+                <button className={view === 'plan' ? 'facility-view-toggle__on' : ''} onClick={() => setView('plan')}>
+                  FLOOR PLAN
+                </button>
+                <button className={view === 'section' ? 'facility-view-toggle__on' : ''} onClick={() => setView('section')}>
+                  SECTION
+                </button>
+              </div>
             </div>
+            {view === 'plan' && npcInfo ? (
+              <div className="facility-npc">
+                <div>
+                  <strong style={{ color: npcInfo.self ? '#63ff9b' : '#8ff8ff' }}>
+                    {npcInfo.name}{npcInfo.self ? ' (YOU)' : ''}
+                  </strong>
+                  <span>{npcInfo.role}{npcInfo.visitor ? ' // PRESENCE' : ' // OCCUPANT'}</span>
+                </div>
+                <button className="icon-btn icon-btn--small" onClick={() => setNpcInfo(null)} title="Dismiss signal">
+                  <Icon name="close" size={11} />
+                </button>
+              </div>
+            ) : null}
             <div className="facility-visual__legend">
               <span><i style={{ background: district.color }} /> POWER</span>
               <span><i style={{ background: district.accent }} /> DATA</span>
@@ -475,7 +568,7 @@ export function FacilityView() {
               </div>
               <div className="floor-detail__meta">
                 <span>OCCUPANCY {formatNumber(floorOccupancy)}</span>
-                <span>{FACADE_LABELS[building.facade]}</span>
+                <span>SIGNALS {signals}</span>
                 <span style={{ color: power ? '#63ff9b' : '#ff4f6d' }}>{power ? 'POWERED' : 'DARK'}</span>
               </div>
               <p>

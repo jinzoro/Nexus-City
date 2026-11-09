@@ -3,7 +3,7 @@ import { Icon, type IconName } from './Icons'
 
 const ITEMS: Array<{ id: Exclude<PanelId, null>; label: string; icon: IconName; key: string }> = [
   { id: 'map', label: 'MAP', icon: 'map', key: 'M' },
-  { id: 'sectors', label: 'SECTORS', icon: 'sectors', key: 'S' },
+  { id: 'sectors', label: 'SECTORS', icon: 'sectors', key: 'X' },
   { id: 'transit', label: 'TRANSIT', icon: 'transit', key: 'T' },
   { id: 'systems', label: 'SYSTEMS', icon: 'systems', key: 'Y' },
   { id: 'messages', label: 'MESSAGES', icon: 'messages', key: 'N' },

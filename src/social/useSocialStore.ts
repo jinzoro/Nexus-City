@@ -314,8 +314,14 @@ export const useSocialStore = create<SocialState>()((set, get) => ({
       })()
       const fallback = (user.email?.split('@')[0] ?? 'operator').replace(/[^a-z0-9_-]/gi, '').slice(0, 10)
         || `op-${user.id.slice(0, 4)}`
+      // The chosen handle also travels in user_metadata so it survives email
+      // confirmation on another device/origin (localStorage does not).
+      const meta = String((user.user_metadata as Record<string, unknown> | undefined)?.handle ?? '')
+        .trim()
+        .replace(/[^a-zA-Z0-9_-]/g, '')
       const candidates: string[] = []
       if (pending.length >= 3 && pending.length <= 16) candidates.push(pending)
+      if (meta.length >= 3 && meta.length <= 16 && meta !== pending) candidates.push(meta)
       candidates.push(fallback.length >= 3 ? fallback : `op-${user.id.slice(0, 6)}`)
 
       for (const handle of candidates) {
@@ -392,8 +398,10 @@ export const useSocialStore = create<SocialState>()((set, get) => ({
       email: email.trim(),
       password,
       // Return the confirmation link to whichever origin the app runs on
-      // (localhost during dev, the Vercel domain in production).
-      options: { emailRedirectTo: `${window.location.origin}/` },
+      // (localhost during dev, the Vercel domain in production). The handle
+      // rides along in user_metadata so it is available after confirmation
+      // even when the pending localStorage entry is on another device.
+      options: { data: { handle: clean }, emailRedirectTo: `${window.location.origin}/` },
     })
     if (error) {
       set({ authError: error.message.toUpperCase(), status: 'anonymous' })

@@ -18,6 +18,7 @@ export type IconName =
   | 'close'
   | 'locate'
   | 'enter'
+  | 'logout'
   | 'track'
   | 'chevron'
   | 'info'
@@ -126,6 +127,12 @@ const PATHS: Record<IconName, ReactNode> = {
     <>
       <path d="M13 4h6v16h-6" />
       <path d="M3 12h11m-4-4 4 4-4 4" />
+    </>
+  ),
+  logout: (
+    <>
+      <path d="M11 4H5v16h6" />
+      <path d="M10 12h11m-4-4 4 4-4 4" />
     </>
   ),
   track: (
