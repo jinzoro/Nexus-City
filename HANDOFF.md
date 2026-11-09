@@ -984,10 +984,36 @@ PROFILE > IDENTITY > CITIZEN HANDLE.
   faction standing
 - [ ] **Leaderboard** — opt-in civic ranking (discoveries, goals) via Supabase
 
+### Landing / entry experience
+- [ ] **Animated landing website + auth popup** — replace the current fullscreen hard
+  gate with a polished, animated entry/marketing site. LOGIN / SIGN UP buttons open
+  the auth form in a modal **popup** instead of an inline gate. Supersedes the
+  original "no landing page" decision once shipped.
+  - [ ] **Hero** — full-viewport NEXUS brand hero over the live city canvas (dimmed /
+    depth-blurred) or a looping pixel-art flythrough; logo, tagline, two CTAs
+    (LOGIN, CREATE CITIZEN) and a scroll cue
+  - [ ] **Auth modal** — reuse `AccountGate` (sign-in / create tabs, handle, email
+    confirmation pending + resend) inside an animated dialog: focus trap, Esc /
+    backdrop close, open/close transition, `aria-modal`, focus returned to the CTA
+  - [ ] **Scroll sections** — feature highlights, district showcase, live city stats,
+    screenshot gallery, faction / codex teasers, footer with links
+  - [ ] **Motion** — parallax layers, neon flicker, scanline / CRT overlay,
+    reveal-on-scroll, walking pixel citizens, news-ticker marquee; all gated behind
+    `prefers-reduced-motion`
+  - [ ] **Auth handoff** — on success, crossfade from the landing into the existing
+    intro boot sequence; signed-in visitors and `#node=` / `#cell=` deep links skip
+    straight to the city
+  - [ ] **Responsive + a11y** — mobile-first layout, keyboard-navigable CTAs and
+    modal, visible focus rings, reduced-motion fallbacks
+  - [ ] **Tech** — keep the single Canvas engine as the backdrop (no new render
+    deps); CSS / Web Animations for motion; lazy-load below-fold sections; preserve
+    Supabase handle-metadata + redirect-URL behaviour
+
 ### Suggested priority
-1. Economy + cascading events (makes the city feel alive)
-2. Walk into buildings + NPC dialogue (payoff for the interior system)
-3. DM unread badges + friends (makes the social layer sticky)
-4. Forgot password / self-service account (removes real auth friction)
-5. OffscreenCanvas worker
-6. CI build and type-check
+1. Animated landing site + auth popup (first impression / entry UX)
+2. Economy + cascading events (makes the city feel alive)
+3. Walk into buildings + NPC dialogue (payoff for the interior system)
+4. DM unread badges + friends (makes the social layer sticky)
+5. Forgot password / self-service account (removes real auth friction)
+6. OffscreenCanvas worker
+7. CI build and type-check
