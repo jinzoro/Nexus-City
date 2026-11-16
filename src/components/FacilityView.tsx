@@ -396,6 +396,7 @@ export function FacilityView() {
       facing: 'up',
       body: myProfile?.body ?? '#22e6ff',
       visor: myProfile?.visor ?? '#8ff8ff',
+      built: myProfile?.built ?? 0,
       label: myProfile?.handle ?? 'CITIZEN',
     }
     setSignals(npcs.filter((n) => !n.visitor).length)

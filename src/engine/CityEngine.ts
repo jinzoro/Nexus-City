@@ -33,6 +33,7 @@ import {
   drawStationCrowds,
 } from './dynamicRenderer'
 import { renderStaticLayers } from './staticRender'
+import { drawCitizen } from './citizenSprite'
 import { findPath, nearestWalkable } from './walkGrid'
 import { type Camera, type View, clamp, getBuildingBounds, isBoundsVisible, isPointInBounds, project } from './renderUtils'
 import { useCityStore } from '../state/useCityStore'
@@ -494,26 +495,30 @@ export class CityEngine {
   }
 
   private drawPlayer(ctx: CanvasRenderingContext2D) {
+    // Guests have no social profile; they still walk a default citizen rather
+    // than an invisible one.
     const prof = useSocialStore.getState().profile
-    if (!prof) return
+    const look = prof
+      ? { body: prof.body, visor: prof.visor, built: prof.built }
+      : { body: '#22e6ff', visor: '#8ff8ff', built: 0 }
     const p = useCityStore.getState().player
     const pt = project(this.view, p.x, p.y, 0.5)
-    const x = Math.round(pt[0]) - 6
-    const y = Math.round(pt[1]) - 14
-    if (x < -20 || y < -20 || x > this.width + 20 || y > this.height + 20) return
-    ctx.save()
-    ctx.fillStyle = 'rgba(0,0,0,0.4)'
-    ctx.fillRect(x + 1, y + 13, 10, 2)
-    ctx.fillStyle = prof.body
-    ctx.fillRect(x, y, 12, 10)
-    ctx.fillStyle = prof.visor
-    ctx.fillRect(x + 2, y + 2, 8, 2)
-    ctx.fillStyle = '#8ff8ff'
-    if (p.facing === 'up') ctx.fillRect(x + 4, y - 2, 4, 2)
-    if (p.facing === 'down') ctx.fillRect(x + 4, y + 12, 4, 2)
-    if (p.facing === 'left') ctx.fillRect(x - 2, y + 4, 2, 4)
-    if (p.facing === 'right') ctx.fillRect(x + 12, y + 4, 2, 4)
-    ctx.restore()
+    const zoom = this.camera.zoom
+    // Keep the protagonist readable but subordinate to the street: 16 px at
+    // street zoom, slightly larger when the camera is close.
+    const scale = zoom >= 1.35 ? 1.25 : zoom >= 0.7 ? 1 : 0.75
+    const x = Math.round(pt[0])
+    const y = Math.round(pt[1]) + 1
+    const half = 8 * scale
+    if (x < -half - 8 || y < -half * 2 - 8 || x > this.width + half + 8 || y > this.height + 24) return
+    drawCitizen(
+      ctx,
+      look,
+      x,
+      y,
+      scale,
+      { facing: p.facing, walking: p.moving, time: this.time, shadow: true },
+    )
   }
 
   private update(dt: number) {

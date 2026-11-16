@@ -1,5 +1,6 @@
 import type { Building } from '../types'
 import { getDistrict } from '../data/city'
+import { CITIZEN_SIZE, drawCitizen } from './citizenSprite'
 
 export const PLAN_COLS = 28
 export const PLAN_ROWS = 18
@@ -346,7 +347,8 @@ export function spawnNpcs(
     const name = `${NAME_A[Math.floor(rng() * NAME_A.length)]}${NAME_B[Math.floor(rng() * NAME_B.length)]}${rng() < 0.3 ? `-${Math.floor(rng() * 90 + 10)}` : ''}`
     npcs.push(make(false, false, name, SUITS[Math.floor(rng() * SUITS.length)], VISORS[Math.floor(rng() * VISORS.length)]))
   }
-  for (const v of visitors) npcs.push(make(true, v.self, v.name, v.body, v.visor))
+  // You are the on-foot avatar, not a second body on the floor plan.
+  for (const v of visitors) if (!v.self) npcs.push(make(true, false, v.name, v.body, v.visor))
   return npcs
 }
 
@@ -383,6 +385,8 @@ export interface PlanPlayer {
   facing: 'left' | 'right' | 'up' | 'down'
   body: string
   visor: string
+  /** Silhouette variant, mirrors the profile's `built`. */
+  built?: number
   label: string
 }
 
@@ -604,25 +608,26 @@ export function drawFloorPlan(
   // on-foot avatar
   if (player) {
     const ax = px(player.x)
-    const ay = py(player.y)
-    ctx.fillStyle = 'rgba(0,0,0,0.55)'
-    ctx.fillRect(ax - 4, ay + 3, 9, 2)
-    ctx.fillStyle = player.body
-    ctx.fillRect(ax - 3, ay - 4, 7, 8)
-    ctx.fillStyle = player.visor
-    ctx.fillRect(ax - 2, ay - 6, 5, 3)
-    ctx.fillStyle = '#8ff8ff'
-    if (player.facing === 'up') ctx.fillRect(ax - 1, ay - 9, 3, 2)
-    if (player.facing === 'down') ctx.fillRect(ax - 1, ay + 5, 3, 2)
-    if (player.facing === 'left') ctx.fillRect(ax - 6, ay - 2, 2, 3)
-    if (player.facing === 'right') ctx.fillRect(ax + 4, ay - 2, 2, 3)
-    ctx.strokeStyle = 'rgba(143,248,255,0.5)'
+    const ay = py(player.y) + PLAN_CELL * 0.42
+    const scale = 0.85
+    // A soft pad marks which sprite on the floor plan is you.
+    ctx.fillStyle = 'rgba(143,248,255,0.10)'
     ctx.beginPath()
-    ctx.arc(ax, ay, 8, 0, Math.PI * 2)
+    ctx.arc(ax, ay - 6, 9, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = 'rgba(143,248,255,0.45)'
     ctx.stroke()
+    drawCitizen(
+      ctx,
+      { body: player.body, visor: player.visor, built: player.built },
+      ax,
+      ay,
+      scale,
+      { facing: player.facing, shadow: true },
+    )
     ctx.font = '6px Silkscreen, monospace'
     ctx.fillStyle = '#8ff8ff'
-    ctx.fillText(player.label, ax - player.label.length * 1.9, ay - 12)
+    ctx.fillText(player.label, ax - player.label.length * 1.9, ay - CITIZEN_SIZE * scale - 2)
   }
 
   // power-out darkness

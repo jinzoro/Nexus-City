@@ -148,6 +148,8 @@ src/
                              emitters, billboards, holograms, overlays, weather,
                              day/night + district tints, station crowds
     spriteFactory.ts         Cached pixel pedestrian sprites
+    citizenSprite.ts         Shared 16×16 citizen silhouette + canvas draw
+                             (DOM avatar, city walker, floor-plan walker)
     interior.ts              Deterministic facility floor plans, furniture,
                              wandering occupants + presence avatars
     pixelFont.ts             Procedural 5×7 pixel font for in-world signage
@@ -165,7 +167,7 @@ src/
                              idle-lock state and auto-lock preference
     session.ts               Session manager: activity tracking, idle lock,
                              token refresh, cross-tab sign-out
-    PixelCitizen.tsx         SVG avatar
+    PixelCitizen.tsx         SVG avatar, pixels from engine/citizenSprite
   components/
     TopBar, BottomNav, SideControls, EventFeed, HoverTooltip,
     SelectionPanel, SearchPalette, Minimap, Intro, ToastStack, FacilityView,
@@ -408,9 +410,13 @@ Each vehicle is drawn as a small isometric box, not a flat quad:
 
 ### Player citizen avatar
 
-- Signed-in citizens get a walkable avatar in the world, drawn from their
-  social profile colours (`prof.body` / `prof.visor`) with a facing marker
-  and ground shadow (`CityEngine.drawPlayer`).
+- The citizen you customise is the citizen that walks: one 16×16 pixel
+  definition (`engine/citizenSprite.ts`) drives the SVG avatar (HUD, roster,
+  identity card), the city walker (`CityEngine.drawPlayer`) and the floor-plan
+  walker (`interior.ts`). Suit, visor and `built` silhouette all carry through,
+  plus a four-frame walk cycle and ground shadow.
+- Guests (no social profile) walk the default cyan/ice citizen instead of an
+  invisible one; the HUD still requires a profile (see `PLAN.md`).
 - **Citizen mode** (default): `W A S D` / arrow keys walk the avatar
   screen-relative (inverse-iso mapped), `Shift` sprints at 6.4 cells/s vs
   3.2 walking. Movement slides along walls via axis-separated collision
@@ -916,8 +922,9 @@ Ideas for next iterations, ordered by value for effort.
 - [x] Player-triggered events (district blackout, festival, rain, transit hold,
       mesh stress, haze vent) with visible skyline effects + `>` command variants
 - [x] Goals / missions — six OBJECTIVES in PROFILE using discovery/tracking state
-- [x] Player citizen avatar — profile-coloured walker, citizen/survey modes (`C`),
-      click-to-move, persisted position (`nexus.player`)
+- [x] Player citizen avatar — profile-coloured walker sharing the wardrobe
+      sprite, citizen/survey modes (`C`), click-to-move, persisted position
+      (`nexus.player`; per-account key is in `PLAN.md`)
 - [x] Seed picker to generate different cities (reverted — same decision as above)
 
 ### Visual
