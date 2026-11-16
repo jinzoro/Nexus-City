@@ -14,6 +14,7 @@ import { PlayerHud } from './components/PlayerHud'
 import { TopBar } from './components/TopBar'
 import { BottomNav } from './components/BottomNav'
 import { SideControls } from './components/SideControls'
+import { TouchStick } from './components/TouchStick'
 import { EventFeed } from './components/EventFeed'
 import { HoverTooltip } from './components/HoverTooltip'
 import { SelectionPanel } from './components/SelectionPanel'
@@ -473,6 +474,7 @@ export default function App() {
             <EventFeed />
             <PlayerHud />
             <SideControls />
+            <TouchStick />
             <div className="hud-minimap">
               <div className="hud-minimap__head">
                 <span><span className="live-dot" /> CITY GRID</span>
@@ -501,7 +503,7 @@ export default function App() {
                 <span className="coord-rail__key">FPS</span>
                 <span className={fps >= 50 ? 'coord-rail__good' : fps >= 30 ? 'coord-rail__warn' : 'coord-rail__bad'}>{fps}</span>
                 <span className="coord-rail__sep">/</span>
-                <span>RENDER {Math.round(camera.zoom * 100)}%</span>
+                <span>ZOOM {Math.round(camera.zoom * 100)}%</span>
               </div>
               <div className="coord-rail__row coord-rail__row--muted">
                 <span className="coord-rail__key">CYCLE</span>

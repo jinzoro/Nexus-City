@@ -62,8 +62,10 @@ It targets desktop first but is responsive down to 320 px wide.
 6. **Facility view** — entering a selected building opens a live top-down floor
    plan (type-specific rooms, furniture, wandering occupants and signed-in
    visitors) with a SECTION cross-section toggle and its own controls.
-7. **Touch devices** — after the intro, a PINCH/DRAG hint floats above the nav;
-   it auto-dismisses and taps away.
+7. **Touch devices** — after the intro, a WALK/PINCH/DRAG hint floats above the
+   nav; it auto-dismisses and taps away. Coarse pointers also get a fixed walk
+   stick in the lower-left (drag to walk, rim to sprint), and the player HUD +
+   coord rail move up so nothing overlaps the stick.
 
 ---
 
@@ -76,6 +78,7 @@ It targets desktop first but is responsive down to 320 px wide.
 | `Ctrl/⌘ + K` or `/` | Search palette and `>` commands |
 | `M` `X` `T` `Y` `N` `P` `G` | Map / Sectors / Transit / Systems / Messages / Profile / Settings |
 | `W A S D` / arrows | Walk your citizen (screen-relative, citizen mode) |
+| Touch stick (coarse pointer only) | Drag to walk, push to the rim to sprint; hidden in survey, photo and facility views |
 | `Shift` (hold) | Sprint (7.2 vs 3.6 cells/s, with momentum easing) |
 | `L` | Locate my citizen and lock the camera on them |
 | `O` | City overview |
@@ -1014,7 +1017,7 @@ PROFILE > IDENTITY > CITIZEN HANDLE.
       searchlights and in-world `POLICE` tags at street zoom
 - [x] **Readability + responsive type** — readable monospace UI stack, pixel face
       only for headings, 10 px minimum labels (was 6–8 px), larger touch targets
-- [ ] **Touch walk stick** — virtual joystick for coarse-pointer users instead of
+- [x] **Touch walk stick** — virtual joystick for coarse-pointer users instead of
       relying on double-tap-to-walk + WASD
 - [ ] **Session device list** — show the other active sessions from Supabase and
       revoke them individually rather than only SIGN OUT EVERYWHERE
@@ -1121,8 +1124,8 @@ PROFILE > IDENTITY > CITIZEN HANDLE.
       (`engine/walkGrid.ts`)
 - [ ] **Interior interactions** — sit at a desk, use a terminal, buy from a stall;
   small persistent state changes
-- [ ] **Gamepad + mobile joystick** — controller support and an on-screen stick for
-  touch walking
+- [ ] **Gamepad support** — controller input for walking and camera (the touch
+  stick already covers phones)
 
 ### UX / settings & mobile
 - [ ] **Settings depth** — audio mixer, UI scale, keybind remap, graphics and

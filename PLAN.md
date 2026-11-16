@@ -10,33 +10,20 @@ Status: 2026-11-16. Roadmap history and architecture live in `HANDOFF.md`.
 
 ## 1. Bug fixes
 
-Shipped 2026-11-16: guest citizen HUD (fallback identity, no LOG OUT), boot-time
-FPS watchdog silenced for the first 12 s, floor-plan walk cycle for the on-foot
-avatar, visitors wearing their own `built` silhouette, labels clamped inside the
-plan, and per-identity walk positions (`nexus.player:<id>` / `:guest`, with the
-old shared key read once as migration).
+All known visible bugs are shipped as of 2026-11-16:
 
-### P1 — visible inconsistencies
-
-**1. Mobile has no walk input.**
-Touch users can double-tap to walk but cannot steer continuously (already on the
-`HANDOFF.md` roadmap).
-- Fix: coarse-pointer-only virtual stick in the lower-left, clamped outside HUD
-  hit areas, writing the existing `moveKeys` store fields.
-- Files: `src/components/SideControls.tsx` or a new `TouchStick.tsx`, `styles.css`.
-- Prove: 390×844 emulation → stick drags the citizen; HUD stays tappable.
-
-### P2 — polish / misleading labels
-
-**2. `RENDER 149%` in the coord rail is actually zoom.** `camera.zoom * 100`
-is labelled RENDER, which reads as render load.
-- Fix: label it `ZOOM`, or show the real render scale from the engine.
-- Files: `src/App.tsx` (coord rail).
-
-**3. Landing hero art is a static capture.** `public/og-image.png` no longer
-matches the in-game look (new skyline). Regenerate with
-`node scripts/gen-assets.mjs` after the next visual batch; keep the file under
-~300 KB.
+- Guest citizen HUD with a fallback identity and no LOG OUT.
+- Boot-time FPS watchdog silenced for the first 12 s.
+- Floor-plan walk cycle for the on-foot avatar; visitors wear their own `built`
+  silhouette; tags clamped inside the plan.
+- Per-identity walk positions (`nexus.player:<id>` / `:guest`, old shared key
+  read once as migration).
+- Coarse-pointer walk stick in the lower-left, driving the same `moveKeys` as
+  the keyboard, with HUD/coord rail moved clear of it on touch layouts.
+- Coord rail now says `ZOOM`, not `RENDER`, for `camera.zoom`.
+- `og-image.png` needed no change: `scripts/gen-assets.mjs` is deterministic
+  procedural art, not a screenshot — rerunning it produced byte-identical
+  assets.
 
 ---
 
@@ -100,10 +87,8 @@ bookmarks, with export/import JSON.
 
 ## 3. Order I'd work in
 
-1. Bug 1 (touch) before any promotion aimed at phones; Bugs 2–3 when touching
-   the HUD or assets.
-2. Feature B (avatar preview) — cheap, and it locks in the shared-sprite fix.
-3. Features A, then C, then E/F depending on whether the next goal is “feels
+1. Feature B (avatar preview) — cheap, and it locks in the shared-sprite fix.
+2. Features A, then C, then E/F depending on whether the next goal is “feels
    alive” or “has a game loop”.
 
 ## 4. Verification habits

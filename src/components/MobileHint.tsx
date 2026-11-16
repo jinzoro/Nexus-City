@@ -32,8 +32,8 @@ export function MobileHint() {
         <span />
       </span>
       <span className="mobile-hint__body">
-        <strong>PINCH TO ZOOM · DRAG TO PAN</strong>
-        <span>Tap any structure or citizen to open its record.</span>
+        <strong>WALK · PINCH · DRAG</strong>
+        <span>Drag the stick to walk. Pinch to zoom, drag to pan, tap to inspect.</span>
       </span>
       <span className="mobile-hint__close" aria-hidden="true">×</span>
     </button>

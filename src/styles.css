@@ -8430,3 +8430,109 @@ kbd {
     padding: 0 7px;
   }
 }
+
+/* ============================================================
+   TOUCH WALK STICK
+   ============================================================ */
+
+.touch-stick {
+  display: none;
+}
+
+/* Only thumbs get a stick; mouse builds keep the keyboard-only walk. */
+@media (pointer: coarse) {
+  .touch-stick {
+    position: absolute;
+    left: 16px;
+    bottom: 18px;
+    display: block;
+    width: 104px;
+    height: 104px;
+    z-index: 19;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    opacity: 0.72;
+    transition: opacity 0.18s ease;
+  }
+
+  .touch-stick--held {
+    opacity: 1;
+  }
+
+  .touch-stick__ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 1px solid rgba(34, 230, 255, 0.35);
+    background: radial-gradient(circle at 50% 45%, rgba(34, 230, 255, 0.12), rgba(5, 8, 18, 0.55) 68%);
+    box-shadow: 0 0 18px rgba(34, 230, 255, 0.12), inset 0 0 22px rgba(4, 8, 16, 0.6);
+    backdrop-filter: blur(3px);
+  }
+
+  /* Cardinal ticks so the stick reads as a direction pad, not a button. */
+  .touch-stick__ring::before,
+  .touch-stick__ring::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    background: rgba(143, 248, 255, 0.3);
+    transform: translate(-50%, -50%);
+  }
+
+  .touch-stick__ring::before {
+    width: 1px;
+    height: 76%;
+  }
+
+  .touch-stick__ring::after {
+    width: 76%;
+    height: 1px;
+  }
+
+  .touch-stick__knob {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 42px;
+    height: 42px;
+    margin: -21px 0 0 -21px;
+    border-radius: 50%;
+    border: 1px solid rgba(143, 248, 255, 0.7);
+    background: radial-gradient(circle at 40% 35%, rgba(143, 248, 255, 0.5), rgba(9, 18, 32, 0.9) 70%);
+    box-shadow: 0 0 12px rgba(34, 230, 255, 0.3);
+  }
+
+  /* Keep the left rail clear of the stick. */
+  .coord-rail {
+    bottom: 132px;
+  }
+
+  .app--photo .touch-stick {
+    display: none;
+  }
+}
+
+@media (pointer: coarse) and (max-width: 760px) {
+  .touch-stick {
+    left: 12px;
+    bottom: 76px;
+    width: 88px;
+    height: 88px;
+  }
+
+  .touch-stick__knob {
+    width: 36px;
+    height: 36px;
+    margin: -18px 0 0 -18px;
+  }
+
+  .coord-rail {
+    bottom: 172px;
+  }
+
+  .player-hud {
+    bottom: 232px;
+  }
+}
