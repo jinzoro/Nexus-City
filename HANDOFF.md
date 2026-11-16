@@ -1029,6 +1029,70 @@ PROFILE > IDENTITY > CITIZEN HANDLE.
   (offline graceful degrade; no backend server required)
 - [x] Interactive facility interiors with NPCs and floor plans
 
+## Security hardening
+
+### Done in code (no action needed)
+
+- **Password policy** — `src/social/password.ts` requires 12–72 characters with
+  upper + lower + digit + symbol and rejects the email local-part / handle.
+  Live checklist (`PasswordChecklist.tsx`) is shown on sign-up, recovery and
+  password change; the store re-checks on `signUp`, `completePasswordReset` and
+  `updatePassword`. Sign-in still only needs the old 6 characters so existing
+  accounts are not locked out.
+- **Schema hardening** — `supabase/schema.v3.sql` (additive, safe to re-run):
+  pinned `search_path` on `delete_my_user` and made it actually delete the auth
+  user (the old `auth.admin.delete_user()` call does not exist in SQL), made
+  `profiles` self-readable only, added `WITH CHECK` to the profile update policy,
+  derived chat handle/body/visor from the author's profile instead of trusting
+  the client, and added server-side chat throttles.
+- **Browser headers** — `vercel.json` now sends a CSP plus
+  `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`,
+  `Permissions-Policy`, `Strict-Transport-Security` and
+  `Cross-Origin-Opener-Policy`. Headers only take effect on a real Vercel deploy
+  (not `vite dev` / `vite preview`).
+
+### Your turn — manual steps I cannot do from the repo
+
+Supabase Dashboard:
+
+- [ ] Run `supabase/schema.sql`, then `schema.v2.sql` if not already applied,
+      then `supabase/schema.v3.sql` in the SQL editor.
+- [ ] Authentication → Providers → Email → **Minimum password length = 12** and
+      enable the upper/lower/digit/symbol requirements (the client rule is UX
+      only; this is the real enforcement).
+- [ ] Authentication → Providers → Email → enable **leaked password protection**
+      (checks against HaveIBeenPwned).
+- [ ] Authentication → Rate limits → tighten sign-in, sign-up and email sends
+      (e.g. 30 sign-ins/hour per IP); keep email confirmations on.
+- [ ] Authentication → Bot and abuse protection → enable CAPTCHA (Turnstile or
+      hCaptcha), then add the site key to the app config if you want it wired in.
+- [ ] Authentication → URL Configuration → Site URL = production domain and
+      Redirect URLs allowlisting only `https://your-app.vercel.app/**` and
+      `http://localhost:4173/**` (nothing wildcarded to `*`).
+- [ ] Authentication → MFA → enable TOTP if you want a second factor; the app has
+      no enrollment UI yet, so this only matters after that ships.
+- [ ] Create a test account, then use PROFILE → SECURITY → DELETE ACCOUNT and
+      confirm the row is gone from `auth.users` (this is what v3 fixes).
+- [ ] Confirm the plan's **daily backups / PITR** are on before opening the app
+      to real users.
+
+Vercel / hosting:
+
+- [ ] Deploy once and open the browser console + Network tab: verify no CSP
+      violations block fonts, the static worker or Supabase realtime.
+- [ ] If you use a **custom Supabase domain** (not `*.supabase.co`), add it to
+      `connect-src` in `vercel.json` or realtime/auth calls will be blocked.
+- [ ] Add the production domain to Supabase (see above) *before* testing sign-up
+      emails, or the confirmation link falls back to the Site URL.
+- [ ] Keep `SUPABASE_SERVICE_ROLE_KEY` out of the Vercel frontend env — only
+      `VITE_SUPABASE_URL` and the publishable/anon key belong in a Vite build.
+- [ ] Run `npm audit` and update dependencies; there is no automated dependency
+      updater configured.
+- [ ] Optional hardening if you later expose other citizens' profile cards:
+      the `profiles` table is now self-read only, so add a narrow public view
+      (`id, handle, body, visor, built, created_at`) instead of re-opening the
+      whole table (it also carries `bio`, `status_text` and `last_seen`).
+
 ## Deployment (Vercel)
 
 - Framework preset: Vite, Node 20+
@@ -1037,7 +1101,8 @@ PROFILE > IDENTITY > CITIZEN HANDLE.
 - `public/` (fonts, `manifest.webmanifest`, `og-image.png`, icons) is copied
   verbatim into `dist/`; regenerate the images with
   `node scripts/gen-assets.mjs` if you change the brand art
-- Optional `vercel.json` for SPA rewrite and asset caching
+- `vercel.json` handles the SPA rewrite, asset caching and the security
+  headers / CSP. Do not replace it with a bare rewrite-only config.
 - Windows note: if PowerShell blocks `npm`, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` or use `npm.cmd`
 
 
