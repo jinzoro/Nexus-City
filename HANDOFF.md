@@ -780,13 +780,15 @@ Bundle size: ~593 kB main JS + ~234 kB lazy Supabase chunk + ~54 kB worker /
 ### Priority batch (entry, economy, interiors, social, auth, worker, CI)
 
 - **Entry** — the hard auth gate is now a presentation landing page
-  (`components/Landing.tsx`) with no engine mounted: static skyline art
-  (`public/og-image.png`), brand hero, nine-sector showcase, feature and faction
-  sections, scroll cue and motion — all disabled under `prefers-reduced-motion`.
-  **LOGIN / CREATE CITIZEN live on the right of the sticky header**; the hero has a
-  single ENTER THE CITY CTA plus a HOW IT PLAYS anchor. Both header buttons open
-  `AccountGate` in an accessible modal (focus trap, Esc, backdrop close, focus
-  restored to the trigger). Successful sign-in crossfades into the boot
+  (`components/Landing.tsx`) with no engine mounted. Layout: glass sticky header,
+  two-column hero (pitch + CTA rail on the left, skyline art framed in a HUD window
+  on the right, hero stat rail below) and a hero-sized check of the game's numbers;
+  then sector showcase, feature cards with SVG icons, faction teasers, a closing CTA
+  band and a link footer. Background is layered gradient glow + pixel grid, not the
+  simulation. **LOGIN / CREATE CITIZEN live on the right of the header**; the hero
+  carries ENTER THE CITY + HOW IT PLAYS. Both header buttons open `AccountGate` in an
+  accessible modal (focus trap, Esc, backdrop close, focus restored to the trigger).
+  All motion is disabled under `prefers-reduced-motion`. Successful sign-in crossfades into the boot
   sequence; deep links (`#node=`, `#cell=`, `#view=`) skip the intro. Without
   Supabase env vars the landing offers **ENTER AS GUEST**, so the city stays
   playable offline.
@@ -822,7 +824,11 @@ chunk).
 A later headless-Chromium pass against the production build confirmed: the landing
 renders its static skyline and districts with the auth pair on the right of the
 header, no canvas and zero horizontal overflow at 1440 and 320 px (the landing
-scrolls internally at 320); the auth modal opens with `aria-modal` and closes on Esc; and, with the Supabase env vars blanked so the
+scrolls internally at 320); the auth modal opens with `aria-modal` and closes on Esc;
+the redesigned hero was measured at 1440/1280/1024/768/390 px — copy and art sit
+side by side above 1020 px, art follows the copy when stacked, the stat rail stays
+1 row (2 when stacked), the floating sector badge stays inside the viewport and the
+hero ends above the fold on desktop (809 px at 1440×900); and, with the Supabase env vars blanked so the
 guest CTA is offered, ENTER AS GUEST → intro COMPILING gate → city boot runs with
 no page exceptions, all seven nav tabs open their panel and the search palette
 responds. Still unexercised without project credentials: recovery email, unread
@@ -1127,9 +1133,9 @@ PROFILE > IDENTITY > CITIZEN HANDLE.
   gate with a polished, animated entry/marketing site. LOGIN / SIGN UP buttons open
   the auth form in a modal **popup** instead of an inline gate. Supersedes the
   original "no landing page" decision once shipped.
-  - [x] **Hero** — full-viewport NEXUS brand hero over static skyline art (no live
-    simulation on the marketing page); logo, tagline, ENTER THE CITY + HOW IT PLAYS
-    CTAs and a scroll cue
+  - [x] **Hero** — two-column NEXUS hero (pitch, assurance line, CTAs, stats rail)
+    beside static skyline art in a framed HUD window; no live simulation on the
+    marketing page
   - [x] **Auth modal** — reuse `AccountGate` (sign-in / create tabs, handle, email
     confirmation pending + resend) inside an animated dialog: focus trap, Esc /
     backdrop close, open/close transition, `aria-modal`, focus returned to the CTA

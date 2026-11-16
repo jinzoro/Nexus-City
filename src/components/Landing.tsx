@@ -4,6 +4,7 @@ import type { CityData } from '../types'
 import { CITY_SEED_DEFAULT } from '../data/city'
 import { FACTIONS } from '../data/world'
 import { AccountGate } from './AccountGate'
+import { Icon } from './Icons'
 
 interface LandingSocial {
   enabled: boolean
@@ -25,11 +26,28 @@ interface LandingProps {
   onGuest?: () => void
 }
 
+const FEATURES = [
+  {
+    icon: 'systems' as const,
+    title: 'LIVING SKYLINE',
+    body: 'Day/night tint, rolling civic events, blackouts and festivals change the skyline in real time — the city runs whether you watch or not.',
+  },
+  {
+    icon: 'power' as const,
+    title: 'DISTRICT ECONOMY',
+    body: 'Power demand, income and crime feed each other. A grid fault cascades into transit holds, street crime and emergency raids.',
+  },
+  {
+    icon: 'messages' as const,
+    title: 'CITIZEN MESH',
+    body: 'Sign in, walk the streets, enter buildings on foot, talk to the occupants and signal other operators across the cavern.',
+  },
+]
+
 /**
  * Marketing / entry site for the game. The city itself is not rendered here —
  * the page is a static presentation (skyline art, sectors, features, factions)
- * and the live simulation only boots once somebody enters. CSS handles the
- * scanlines, veil and reveal motion (all disabled under prefers-reduced-motion).
+ * and the live simulation only boots once somebody enters.
  */
 export function Landing({ city, social, error, disabled = false, leaving = false, onGuest }: LandingProps) {
   const [authMode, setAuthMode] = useState<'in' | 'up' | null>(null)
@@ -51,16 +69,16 @@ export function Landing({ city, social, error, disabled = false, leaving = false
 
   return (
     <div className={`landing ${leaving ? 'landing--leaving' : ''}`} data-login>
-      <div className="landing__backdrop" aria-hidden="true">
-        <img className="landing__skyline" src="/og-image.png" alt="" />
-        <span className="landing__scanlines" />
-        <span className="landing__veil" />
+      <div className="landing__bg" aria-hidden="true">
+        <span className="landing__bg-grid" />
+        <span className="landing__bg-glow landing__bg-glow--cyan" />
+        <span className="landing__bg-glow landing__bg-glow--pink" />
       </div>
 
       <header className="landing__nav">
         <span className="landing__brand">NEXUS<span>//</span></span>
         <nav className="landing__navlinks" aria-label="Sections">
-          <a href="#districts">DISTRICTS</a>
+          <a href="#districts">SECTORS</a>
           <a href="#systems">SYSTEMS</a>
           <a href="#factions">FACTIONS</a>
         </nav>
@@ -87,27 +105,67 @@ export function Landing({ city, social, error, disabled = false, leaving = false
       </header>
 
       <section className="landing__hero">
-        <p className="landing__eyebrow"><span className="live-dot" /> CAVERN 07 // CIVIC MESH ONLINE</p>
-        <h1 className="landing__title">
-          NEXUS<span>//</span>
-        </h1>
-        <p className="landing__tagline">
-          An underground megapolis where the city itself is the interface.
-          Nine sectors, 2,500 towers, maglev rails and seven million souls — running
-          live in your browser.
-        </p>
-        <div className="landing__ctas">
-          <button className="landing__cta landing__cta--primary" onClick={enterCity} disabled={social.enabled ? disabled : undefined}>
-            {social.enabled ? 'ENTER THE CITY' : 'ENTER AS GUEST'}
-          </button>
-          <a className="landing__cta landing__cta--ghost" href="#systems">HOW IT PLAYS</a>
-        </div>
-        {!social.enabled ? (
-          <p className="landing__offline">
-            SOCIAL MESH OFFLINE — set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY to enable
-            citizen accounts. The city itself still runs locally once you enter.
+        <div className="landing__hero-copy">
+          <p className="landing__eyebrow">
+            <span className="live-dot" /> CAVERN 07 · CIVIC MESH ONLINE
           </p>
-        ) : null}
+          <h1 className="landing__title">
+            NEXUS<span>//</span>
+          </h1>
+          <p className="landing__kicker">UNDERGROUND MEGAPOLIS</p>
+          <p className="landing__tagline">
+            Nine sectors, 2,500 towers and seven million souls under one cavern ceiling.
+            Maglev lines, street traffic and a full night cycle keep running whether you
+            watch or not — step in and the city answers.
+          </p>
+          <div className="landing__ctas">
+            <button
+              className="landing__cta landing__cta--primary"
+              onClick={enterCity}
+              disabled={social.enabled ? disabled : undefined}
+            >
+              {social.enabled ? 'ENTER THE CITY' : 'ENTER AS GUEST'}
+              <Icon name="enter" size={14} />
+            </button>
+            <a className="landing__cta landing__cta--ghost" href="#systems">
+              HOW IT PLAYS
+            </a>
+          </div>
+          <ul className="landing__assurances">
+            <li>NO INSTALL</li>
+            <li>RUNS IN YOUR BROWSER</li>
+            <li>FREE TO ENTER</li>
+          </ul>
+          {!social.enabled ? (
+            <p className="landing__offline">
+              SOCIAL MESH OFFLINE — set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY to
+              enable citizen accounts. The city itself still runs locally once you enter.
+            </p>
+          ) : null}
+        </div>
+
+        <div className="landing__hero-art">
+          <figure className="landing__frame">
+            <div className="landing__frame-bar">
+              <span className="landing__frame-tag">CAVERN 07 // SECTOR 09</span>
+              <span className="landing__frame-live"><span className="live-dot" /> LIVE BUILD</span>
+            </div>
+            <img
+              className="landing__frame-img"
+              src="/og-image.png"
+              alt="Isometric pixel-art cyberpunk skyline glowing with neon beneath a cavern ceiling"
+            />
+            <span className="landing__frame-scan" aria-hidden="true" />
+            <figcaption className="landing__frame-foot">
+              <span>SEED {CITY_SEED_DEFAULT}</span>
+              <span>MAGLEV ONLINE</span>
+              <span>NIGHT CYCLE</span>
+            </figcaption>
+          </figure>
+          <span className="landing__hero-badge">
+            <strong>{city ? city.districts.length : '—'}</strong> SECTORS · ONE CAVERN
+          </span>
+        </div>
 
         <div className="landing__statline">
           {stats.map((stat) => (
@@ -118,7 +176,7 @@ export function Landing({ city, social, error, disabled = false, leaving = false
           ))}
         </div>
 
-        <a className="landing__scroll" href="#districts" aria-label="Scroll to districts">
+        <a className="landing__scroll" href="#districts" aria-label="Scroll to sectors">
           <span>SCROLL</span>
           <i />
         </a>
@@ -126,16 +184,18 @@ export function Landing({ city, social, error, disabled = false, leaving = false
 
       <section className="landing__section" id="districts">
         <div className="landing__section-head">
-          <h2>NINE SECTORS, ONE CAVERN</h2>
+          <span className="landing__eyebrow-label">01 // THE CAVERN</span>
+          <h2>Nine sectors, one machine</h2>
           <p>Every district runs its own economy, palette and power draw. Walk in and the HUD follows you.</p>
         </div>
         <div className="landing__districts">
-          {(city?.districts ?? []).map((district) => (
+          {(city?.districts ?? []).map((district, index) => (
             <article
               key={district.id}
               className="landing__district"
               style={{ '--district': district.color, '--district-accent': district.accent } as CSSProperties}
             >
+              <span className="landing__district-index">{String(index + 1).padStart(2, '0')}</span>
               <div className="landing__district-head">
                 <span>{district.code}</span>
                 <i />
@@ -154,31 +214,27 @@ export function Landing({ city, social, error, disabled = false, leaving = false
 
       <section className="landing__section" id="systems">
         <div className="landing__section-head">
-          <h2>THE CITY IS THE INTERFACE</h2>
+          <span className="landing__eyebrow-label">02 // SYSTEMS</span>
+          <h2>The city is the interface</h2>
           <p>No cards, no dashboards. Drag to pan, scroll to zoom, click a tower to open its record.</p>
         </div>
         <div className="landing__features">
-          <article>
-            <span className="landing__feature-glyph">◈</span>
-            <h3>LIVING SKYLINE</h3>
-            <p>Day/night tint, rolling civic events, blackouts and festivals change the skyline in real time.</p>
-          </article>
-          <article>
-            <span className="landing__feature-glyph">▦</span>
-            <h3>DISTRICT ECONOMY</h3>
-            <p>Power demand, income and crime feed each other. Grid faults cascade into gridlock and raids.</p>
-          </article>
-          <article>
-            <span className="landing__feature-glyph">⌁</span>
-            <h3>CITIZEN MESH</h3>
-            <p>Sign in, walk the streets, enter buildings on foot, talk to occupants and signal other operators.</p>
-          </article>
+          {FEATURES.map((feature) => (
+            <article key={feature.title}>
+              <span className="landing__feature-icon">
+                <Icon name={feature.icon} size={20} />
+              </span>
+              <h3>{feature.title}</h3>
+              <p>{feature.body}</p>
+            </article>
+          ))}
         </div>
       </section>
 
       <section className="landing__section" id="factions">
         <div className="landing__section-head">
-          <h2>SIX FACTIONS HOLD THE FLOOR</h2>
+          <span className="landing__eyebrow-label">03 // FACTIONS</span>
+          <h2>Six factions hold the floor</h2>
           <p>Standing is earned by answering dispatches and by who you help inside the towers.</p>
         </div>
         <div className="landing__factions">
@@ -192,16 +248,31 @@ export function Landing({ city, social, error, disabled = false, leaving = false
         </div>
       </section>
 
+      <section className="landing__closer">
+        <div>
+          <h2>Ready to drop in?</h2>
+          <p>The cavern is already running. Take a citizen handle or walk in as a guest.</p>
+        </div>
+        <button
+          className="landing__cta landing__cta--primary"
+          onClick={enterCity}
+          disabled={social.enabled ? disabled : undefined}
+        >
+          {social.enabled ? 'ENTER THE CITY' : 'ENTER AS GUEST'}
+          <Icon name="enter" size={14} />
+        </button>
+      </section>
+
       <footer className="landing__footer">
         <div>
           <span className="landing__brand">NEXUS<span>//</span></span>
           <p>UNDERGROUND MEGAPOLIS · CAVERN 07 · SEED {CITY_SEED_DEFAULT}</p>
         </div>
-        <div className="landing__footer-actions">
-          <button className="landing__cta landing__cta--primary" onClick={enterCity} disabled={social.enabled ? disabled : undefined}>
-            {social.enabled ? 'ENTER THE CITY' : 'ENTER AS GUEST'}
-          </button>
-        </div>
+        <nav className="landing__footer-links" aria-label="Footer">
+          <a href="#districts">SECTORS</a>
+          <a href="#systems">SYSTEMS</a>
+          <a href="#factions">FACTIONS</a>
+        </nav>
         <div className="landing__footer-meta">
           <span>CLIENT-SIDE SIMULATION</span>
           <span>SUPABASE PRESENCE</span>
