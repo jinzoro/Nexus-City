@@ -37,10 +37,12 @@ It targets desktop first but is responsive down to 320 px wide.
 
 ## What the user experiences
 
-1. **Landing** — animated entry site over the live city backdrop: brand hero with
-   LOGIN / CREATE CITIZEN CTAs (auth modal), sector showcase, city telemetry and
-   faction teasers. When Supabase env vars are absent the CTA becomes ENTER AS
-   GUEST. A successful sign-in crossfades into the boot sequence.
+1. **Landing** — a presentation site for the game, not the game itself: static
+   skyline art behind a brand hero, sector showcase, feature and faction sections.
+   No simulation runs here. LOGIN / CREATE CITIZEN sit on the right of the sticky
+   header and open the auth modal; the hero carries a single ENTER THE CITY CTA.
+   When Supabase env vars are absent the header offers ENTER AS GUEST. A successful
+   sign-in crossfades into the boot sequence.
 2. **Intro** — boot sequence over the city. While `generateCity()` compiles, the
    button reads COMPILING… and is disabled; it unlocks the moment the city data
    is ready ("COMPILING CAVERN TOPOLOGY — SEED LOCK" status line).
@@ -777,12 +779,14 @@ Bundle size: ~593 kB main JS + ~234 kB lazy Supabase chunk + ~54 kB worker /
 
 ### Priority batch (entry, economy, interiors, social, auth, worker, CI)
 
-- **Entry** — the hard auth gate is now an animated landing page
-  (`components/Landing.tsx`) using the same city engine as a dimmed, non-interactive
-  backdrop: hero + CTAs, nine-sector showcase, feature and faction sections, scroll
-  cue and motion — all disabled under `prefers-reduced-motion`. LOGIN / CREATE
-  CITIZEN open `AccountGate` in an accessible modal (focus trap, Esc, backdrop close,
-  focus restored to the trigger). Successful sign-in crossfades into the boot
+- **Entry** — the hard auth gate is now a presentation landing page
+  (`components/Landing.tsx`) with no engine mounted: static skyline art
+  (`public/og-image.png`), brand hero, nine-sector showcase, feature and faction
+  sections, scroll cue and motion — all disabled under `prefers-reduced-motion`.
+  **LOGIN / CREATE CITIZEN live on the right of the sticky header**; the hero has a
+  single ENTER THE CITY CTA plus a HOW IT PLAYS anchor. Both header buttons open
+  `AccountGate` in an accessible modal (focus trap, Esc, backdrop close, focus
+  restored to the trigger). Successful sign-in crossfades into the boot
   sequence; deep links (`#node=`, `#cell=`, `#view=`) skip the intro. Without
   Supabase env vars the landing offers **ENTER AS GUEST**, so the city stays
   playable offline.
@@ -816,9 +820,9 @@ Verified for this batch: `tsc -b` clean and `npm run build` succeeds (main
 chunk).
 
 A later headless-Chromium pass against the production build confirmed: the landing
-renders with its live canvas backdrop, nine districts and zero horizontal overflow
-at 1440 and 320 px (the landing scrolls internally at 320); the auth modal opens
-with `aria-modal` and closes on Esc; and, with the Supabase env vars blanked so the
+renders its static skyline and districts with the auth pair on the right of the
+header, no canvas and zero horizontal overflow at 1440 and 320 px (the landing
+scrolls internally at 320); the auth modal opens with `aria-modal` and closes on Esc; and, with the Supabase env vars blanked so the
 guest CTA is offered, ENTER AS GUEST → intro COMPILING gate → city boot runs with
 no page exceptions, all seven nav tabs open their panel and the search palette
 responds. Still unexercised without project credentials: recovery email, unread
@@ -1123,9 +1127,9 @@ PROFILE > IDENTITY > CITIZEN HANDLE.
   gate with a polished, animated entry/marketing site. LOGIN / SIGN UP buttons open
   the auth form in a modal **popup** instead of an inline gate. Supersedes the
   original "no landing page" decision once shipped.
-  - [x] **Hero** — full-viewport NEXUS brand hero over the live city canvas (dimmed /
-    depth-blurred) or a looping pixel-art flythrough; logo, tagline, two CTAs
-    (LOGIN, CREATE CITIZEN) and a scroll cue
+  - [x] **Hero** — full-viewport NEXUS brand hero over static skyline art (no live
+    simulation on the marketing page); logo, tagline, ENTER THE CITY + HOW IT PLAYS
+    CTAs and a scroll cue
   - [x] **Auth modal** — reuse `AccountGate` (sign-in / create tabs, handle, email
     confirmation pending + resend) inside an animated dialog: focus trap, Esc /
     backdrop close, open/close transition, `aria-modal`, focus returned to the CTA

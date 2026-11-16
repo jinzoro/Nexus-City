@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type { CityData } from '../types'
-import { CityEngine } from '../engine/CityEngine'
 import { CITY_SEED_DEFAULT } from '../data/city'
 import { FACTIONS } from '../data/world'
 import { AccountGate } from './AccountGate'
@@ -27,47 +26,14 @@ interface LandingProps {
 }
 
 /**
- * Marketing / entry experience. The single Canvas city engine is reused as a
- * dimmed, non-interactive backdrop; CSS handles the parallax, flicker,
- * scanlines and reveal motion (all disabled under prefers-reduced-motion).
+ * Marketing / entry site for the game. The city itself is not rendered here —
+ * the page is a static presentation (skyline art, sectors, features, factions)
+ * and the live simulation only boots once somebody enters. CSS handles the
+ * scanlines, veil and reveal motion (all disabled under prefers-reduced-motion).
  */
 export function Landing({ city, social, error, disabled = false, leaving = false, onGuest }: LandingProps) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [authMode, setAuthMode] = useState<'in' | 'up' | null>(null)
-
-  // Live city backdrop — the same engine, just non-interactive.
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas || !city) return
-    const engine = new CityEngine(canvas, city)
-    engine.setPhotoMode(true)
-    engine.focusCell(99, 99, 0.62, false)
-    const reduce =
-      typeof window.matchMedia === 'function' &&
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    let step = 0
-    const vantages: Array<[number, number, number]> = [
-      [99, 99, 0.62],
-      [126, 78, 0.72],
-      [78, 126, 0.58],
-      [154, 99, 0.66],
-      [99, 107, 0.7],
-    ]
-    const timer = reduce
-      ? 0
-      : window.setInterval(() => {
-          step = (step + 1) % vantages.length
-          const [x, y, z] = vantages[step]
-          engine.focusCell(x, y, z)
-        }, 7200)
-    const observer = new ResizeObserver(() => engine.resize())
-    observer.observe(canvas)
-    return () => {
-      if (timer) window.clearInterval(timer)
-      observer.disconnect()
-      engine.destroy()
-    }
-  }, [city])
+  const enterCity = social.enabled ? () => setAuthMode('up') : onGuest
 
   const stats = city
     ? [
@@ -86,25 +52,38 @@ export function Landing({ city, social, error, disabled = false, leaving = false
   return (
     <div className={`landing ${leaving ? 'landing--leaving' : ''}`} data-login>
       <div className="landing__backdrop" aria-hidden="true">
-        <canvas ref={canvasRef} className="landing__canvas" />
+        <img className="landing__skyline" src="/og-image.png" alt="" />
         <span className="landing__scanlines" />
-        <span className="landing__flicker" />
+        <span className="landing__veil" />
       </div>
 
       <header className="landing__nav">
         <span className="landing__brand">NEXUS<span>//</span></span>
-        <nav className="landing__navlinks" aria-label="Entry">
+        <nav className="landing__navlinks" aria-label="Sections">
           <a href="#districts">DISTRICTS</a>
           <a href="#systems">SYSTEMS</a>
           <a href="#factions">FACTIONS</a>
-          <button
-            className="landing__nav-cta"
-            onClick={() => setAuthMode('in')}
-            disabled={disabled}
-          >
-            LOGIN
-          </button>
         </nav>
+        <div className="landing__nav-actions">
+          {social.enabled ? (
+            <>
+              <button className="landing__nav-cta" onClick={() => setAuthMode('in')} disabled={disabled}>
+                LOGIN
+              </button>
+              <button
+                className="landing__nav-cta landing__nav-cta--primary"
+                onClick={() => setAuthMode('up')}
+                disabled={disabled}
+              >
+                CREATE CITIZEN
+              </button>
+            </>
+          ) : (
+            <button className="landing__nav-cta landing__nav-cta--primary" onClick={onGuest}>
+              ENTER AS GUEST
+            </button>
+          )}
+        </div>
       </header>
 
       <section className="landing__hero">
@@ -118,25 +97,15 @@ export function Landing({ city, social, error, disabled = false, leaving = false
           live in your browser.
         </p>
         <div className="landing__ctas">
-          {social.enabled ? (
-            <>
-              <button className="landing__cta landing__cta--primary" onClick={() => setAuthMode('up')} disabled={disabled}>
-                CREATE CITIZEN
-              </button>
-              <button className="landing__cta" onClick={() => setAuthMode('in')} disabled={disabled}>
-                LOGIN
-              </button>
-            </>
-          ) : (
-            <button className="landing__cta landing__cta--primary" onClick={onGuest}>
-              ENTER AS GUEST
-            </button>
-          )}
+          <button className="landing__cta landing__cta--primary" onClick={enterCity} disabled={social.enabled ? disabled : undefined}>
+            {social.enabled ? 'ENTER THE CITY' : 'ENTER AS GUEST'}
+          </button>
+          <a className="landing__cta landing__cta--ghost" href="#systems">HOW IT PLAYS</a>
         </div>
         {!social.enabled ? (
           <p className="landing__offline">
             SOCIAL MESH OFFLINE — set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY to enable
-            citizen accounts. The city preview below is still live.
+            citizen accounts. The city itself still runs locally once you enter.
           </p>
         ) : null}
 
@@ -229,20 +198,9 @@ export function Landing({ city, social, error, disabled = false, leaving = false
           <p>UNDERGROUND MEGAPOLIS · CAVERN 07 · SEED {CITY_SEED_DEFAULT}</p>
         </div>
         <div className="landing__footer-actions">
-          {social.enabled ? (
-            <>
-              <button className="landing__cta landing__cta--primary" onClick={() => setAuthMode('up')} disabled={disabled}>
-                CREATE CITIZEN
-              </button>
-              <button className="landing__cta" onClick={() => setAuthMode('in')} disabled={disabled}>
-                LOGIN
-              </button>
-            </>
-          ) : (
-            <button className="landing__cta landing__cta--primary" onClick={onGuest}>
-              ENTER AS GUEST
-            </button>
-          )}
+          <button className="landing__cta landing__cta--primary" onClick={enterCity} disabled={social.enabled ? disabled : undefined}>
+            {social.enabled ? 'ENTER THE CITY' : 'ENTER AS GUEST'}
+          </button>
         </div>
         <div className="landing__footer-meta">
           <span>CLIENT-SIDE SIMULATION</span>
