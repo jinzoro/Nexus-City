@@ -3,6 +3,8 @@ import type { CSSProperties } from 'react'
 import { useCityStore } from '../state/useCityStore'
 import { useSocialStore, BODY_SWATCHES, VISOR_SWATCHES } from '../social/useSocialStore'
 import { PixelCitizen } from '../social/PixelCitizen'
+import { passwordError } from '../social/password'
+import { PasswordChecklist } from './PasswordChecklist'
 import { SectionLabel } from './ui'
 import { Icon } from './Icons'
 
@@ -136,7 +138,7 @@ export function AccountSection() {
           e.preventDefault()
           if (
             !email.trim() ||
-            password.length < 6 ||
+            (mode === 'up' ? Boolean(passwordError(password, { email, handle })) : password.length < 6) ||
             (mode === 'up' && handle.trim().length < 3) ||
             status === 'linking'
           ) {
@@ -171,6 +173,7 @@ export function AccountSection() {
             onChange={(e) => setPassword(e.target.value)}
           />
         </div>
+        {mode === 'up' ? <PasswordChecklist password={password} email={email} handle={handle} /> : null}
         {mode === 'up' ? (
           <div className="account__row">
             <input
@@ -186,7 +189,7 @@ export function AccountSection() {
           <button
             type="submit"
             className="mini-btn mini-btn--primary account__go"
-            disabled={!email.trim() || password.length < 6 || (mode === 'up' && handle.trim().length < 3) || status === 'linking'}
+            disabled={!email.trim() || (mode === 'up' ? Boolean(passwordError(password, { email, handle })) : password.length < 6) || (mode === 'up' && handle.trim().length < 3) || status === 'linking'}
           >
             {mode === 'up' ? 'CREATE CITIZEN' : 'LINK IN'}
           </button>
@@ -195,7 +198,7 @@ export function AccountSection() {
         {authError ? <p className="account__error">{authError}</p> : null}
         <p className="account__note">
           {mode === 'up'
-            ? '6+ character access code. Your handle seeds your avatar suit and citizen sigil.'
+            ? '12+ characters with upper and lowercase, a number and a symbol — and no part of your email or handle.'
             : 'Welcome back, operator. Your avatar, channels and threads resume with you.'}
         </p>
         {authError ? null : (

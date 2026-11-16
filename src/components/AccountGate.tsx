@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { useSocialStore } from '../social/useSocialStore'
+import { passwordError } from '../social/password'
+import { PasswordChecklist } from './PasswordChecklist'
 
 interface AccountGateProps {
   social: {
@@ -13,6 +15,8 @@ interface AccountGateProps {
   /** Which tab the modal should open on. */
   initialMode?: 'in' | 'up'
 }
+
+const PASSWORD_HINT = 'USE 12+ CHARACTERS WITH UPPERCASE, LOWERCASE, A NUMBER AND A SYMBOL.'
 
 export function AccountGate({ social, error, disabled = false, initialMode = 'in' }: AccountGateProps) {
   const [mode, setMode] = useState<'in' | 'up'>(initialMode)
@@ -34,7 +38,10 @@ export function AccountGate({ social, error, disabled = false, initialMode = 'in
   } = useSocialStore()
 
   const validEmail = email.trim().length > 3 && email.includes('@')
-  const validPassword = password.length >= 6
+  // Sign-in must accept whatever an existing citizen already has; complexity
+  // is only required when choosing a new code.
+  const validPassword =
+    mode === 'in' ? password.length >= 6 : passwordError(password, { email, handle }) === null
   const validHandle = handle.trim().replace(/[^a-zA-Z0-9_-]/g, '').length >= 3
   const canSubmit = !disabled && validEmail && validPassword && (mode === 'in' || validHandle)
   const isPending = Boolean(signupPending)
@@ -102,6 +109,7 @@ export function AccountGate({ social, error, disabled = false, initialMode = 'in
             autoComplete={mode === 'in' ? 'current-password' : 'new-password'}
             disabled={disabled}
           />
+          {mode === 'up' ? <PasswordChecklist password={password} email={email} handle={handle} /> : null}
           <div className="login-gate__actions">
             <button type="submit" disabled={!canSubmit}>
               {mode === 'in' ? 'SIGN IN' : 'SIGN UP'}
@@ -118,7 +126,7 @@ export function AccountGate({ social, error, disabled = false, initialMode = 'in
           {error && <div className="login-gate__error">{error}</div>}
           {mode === 'up' && !error && !disabled ? (
             <p className="login-gate__hint">
-              EMAIL CONFIRMATION IS ON — CONFIRM YOUR ADDRESS, THEN SIGN IN.
+              {PASSWORD_HINT} EMAIL CONFIRMATION IS ON — CONFIRM YOUR ADDRESS, THEN SIGN IN.
             </p>
           ) : null}
           {mode === 'in' && !disabled ? (

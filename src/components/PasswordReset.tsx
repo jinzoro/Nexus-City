@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { useSocialStore } from '../social/useSocialStore'
+import { isStrongPassword } from '../social/password'
+import { PasswordChecklist } from './PasswordChecklist'
 
 /**
  * Full-screen overlay shown when the visitor arrives from a Supabase password
@@ -17,7 +19,7 @@ export function PasswordReset() {
 
   if (!recovery) return null
 
-  const valid = password.length >= 6 && password === confirm && !busy
+  const valid = isStrongPassword(password) && password === confirm && !busy
 
   return (
     <div className="login-gate recovery-gate" data-login>
@@ -41,7 +43,7 @@ export function PasswordReset() {
         >
           <input
             type="password"
-            placeholder="NEW ACCESS CODE (6+)"
+            placeholder="NEW ACCESS CODE (12+)"
             value={password}
             autoComplete="new-password"
             autoFocus
@@ -56,6 +58,7 @@ export function PasswordReset() {
             onChange={(event) => setConfirm(event.target.value)}
             disabled={busy}
           />
+          <PasswordChecklist password={password} />
           <div className="login-gate__actions">
             <button type="submit" disabled={!valid}>
               {busy ? 'WRITING…' : 'SET ACCESS CODE'}
@@ -81,8 +84,9 @@ export function PasswordReset() {
             </div>
           ) : (
             <p className="login-gate__hint">
-              Choose something you have not used elsewhere. Your city, progress and contacts stay
-              attached to this citizen.
+              Use 12+ characters with uppercase, lowercase, a number and a symbol, and something
+              you have not used elsewhere. Your city, progress and contacts stay attached to this
+              citizen.
             </p>
           )}
         </form>

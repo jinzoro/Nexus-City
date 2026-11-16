@@ -6,6 +6,7 @@
 import { create } from 'zustand'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { socialEnabled, supabase } from './client'
+import { passwordError } from './password'
 import type {
   BuildingChannelMessage,
   DirectThreadMessage,
@@ -600,8 +601,9 @@ export const useSocialStore = create<SocialState>()((set, get) => ({
 
   completePasswordReset: async (password) => {
     if (!socialEnabled) return
-    if (password.length < 6) {
-      set({ resetNotice: { tone: 'error', text: 'NEW ACCESS CODE NEEDS 6+ CHARACTERS' } })
+    const weak = passwordError(password)
+    if (weak) {
+      set({ resetNotice: { tone: 'error', text: weak } })
       return
     }
     set({ resetBusy: true, resetNotice: null })
@@ -635,6 +637,11 @@ export const useSocialStore = create<SocialState>()((set, get) => ({
     const clean = handle.trim().replace(/[^a-zA-Z0-9_-]/g, '')
     if (clean.length < 3 || clean.length > 16) {
       set({ authError: 'HANDLE NEEDS 3–16 LETTERS / DIGITS / _ / -' })
+      return
+    }
+    const weak = passwordError(password, { email: email.trim(), handle: clean })
+    if (weak) {
+      set({ authError: weak })
       return
     }
     const client = await supabase()
@@ -773,8 +780,13 @@ export const useSocialStore = create<SocialState>()((set, get) => ({
   },
 
   updatePassword: async (current, next) => {
-    const { profile, status, authError } = get()
+    const { profile, status } = get()
     if (!socialEnabled || status !== 'online' || !profile) return
+    const weak = passwordError(next, { handle: profile.handle })
+    if (weak) {
+      set({ accountNotice: { tone: 'error', text: weak } })
+      return
+    }
     set({ accountBusy: true })
     const client = await supabase()
     try {
@@ -782,6 +794,11 @@ export const useSocialStore = create<SocialState>()((set, get) => ({
       const email = user.user?.email ?? ''
       if (!email) {
         set({ accountBusy: false, accountNotice: { tone: 'error', text: 'NO USER EMAIL ON FILE' } })
+        return
+      }
+      const weakWithEmail = passwordError(next, { email, handle: profile.handle })
+      if (weakWithEmail) {
+        set({ accountBusy: false, accountNotice: { tone: 'error', text: weakWithEmail } })
         return
       }
       const { error: re } = await client.auth.signInWithPassword({ email, password: current })

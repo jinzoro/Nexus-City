@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { useSocialStore } from '../social/useSocialStore'
+import { passwordError } from '../social/password'
+import { PasswordChecklist } from './PasswordChecklist'
 
 export function SecurityCard() {
   const { profile, status, updateEmail, updatePassword, signOutEverywhere, deleteAccount, accountBusy, accountNotice, clearAccountNotice } = useSocialStore()
@@ -13,6 +15,7 @@ export function SecurityCard() {
   const sessionSince = useSocialStore((s) => s.sessionSince)
 
   const canAct = status === 'online' && profile
+  const nextProblem = passwordError(next, { handle: profile?.handle })
   const sessionMinutes = sessionSince ? Math.max(1, Math.round((Date.now() - sessionSince) / 60000)) : 0
 
   return (
@@ -30,9 +33,10 @@ export function SecurityCard() {
       <div className="settings-field">
         <label>CHANGE PASSWORD</label>
         <input type="password" placeholder="CURRENT CODE" value={current} onChange={e => setCurrent(e.target.value)} disabled={!canAct || accountBusy} />
-        <input type="password" placeholder="NEW CODE (6+)" value={next} onChange={e => setNext(e.target.value)} disabled={!canAct || accountBusy} />
+        <input type="password" placeholder="NEW CODE (12+)" value={next} onChange={e => setNext(e.target.value)} disabled={!canAct || accountBusy} />
         <input type="password" placeholder="CONFIRM NEW CODE" value={confirm} onChange={e => setConfirm(e.target.value)} disabled={!canAct || accountBusy} />
-        <button className="mini-btn" onClick={() => { if (next.length >= 6 && next === confirm) updatePassword(current, next) }} disabled={!canAct || accountBusy || next.length < 6 || next !== confirm}>UPDATE PASSWORD</button>
+        {next ? <PasswordChecklist password={next} handle={profile?.handle} /> : null}
+        <button className="mini-btn" onClick={() => { if (!nextProblem && next === confirm) updatePassword(current, next) }} disabled={!canAct || accountBusy || Boolean(nextProblem) || next !== confirm}>UPDATE PASSWORD</button>
       </div>
 
       <div className="settings-field">

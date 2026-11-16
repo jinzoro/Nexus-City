@@ -387,6 +387,43 @@ textarea {
   color: var(--muted-2);
 }
 
+/* Live access-code requirements (sign-up, recovery, password change) */
+.pw-rules {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 10px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pw-rule {
+  display: flex;
+  gap: 5px;
+  font-family: var(--font-ui);
+  font-size: 9px;
+  line-height: 1.6;
+  letter-spacing: 0.1em;
+  color: var(--muted-2);
+  transition: color 0.14s ease;
+}
+
+.pw-rule--ok {
+  color: var(--cyan);
+}
+
+.pw-rule__mark {
+  width: 9px;
+  flex: none;
+  text-align: center;
+}
+
+@media (max-width: 520px) {
+  .pw-rules {
+    grid-template-columns: 1fr;
+  }
+}
+
 .login-gate__pending {
   display: grid;
   gap: 10px;
