@@ -1,4 +1,5 @@
 import { useCityStore, type PanelId } from '../state/useCityStore'
+import { useSocialStore } from '../social/useSocialStore'
 import { Icon, type IconName } from './Icons'
 
 const ITEMS: Array<{ id: Exclude<PanelId, null>; label: string; icon: IconName; key: string }> = [
@@ -15,6 +16,8 @@ export function BottomNav() {
   const activePanel = useCityStore((s) => s.activePanel)
   const togglePanel = useCityStore((s) => s.togglePanel)
   const events = useCityStore((s) => s.events)
+  const dmUnread = useSocialStore((s) => Object.values(s.dmUnread).reduce((sum, n) => sum + n, 0))
+  const messageBadge = events.length + dmUnread
 
   return (
     <nav className="bottom-nav" aria-label="City navigation">
@@ -30,7 +33,11 @@ export function BottomNav() {
           >
             <span className="nav-btn__icon">
               <Icon name={item.icon} size={19} />
-              {item.id === 'messages' && events.length > 0 ? <span className="nav-btn__badge">{events.length}</span> : null}
+              {item.id === 'messages' && messageBadge > 0 ? (
+                <span className="nav-btn__badge" title={`${events.length} alerts / ${dmUnread} unread signals`}>
+                  {messageBadge}
+                </span>
+              ) : null}
             </span>
             <span className="nav-btn__label">{item.label}</span>
             <span className="nav-btn__key">{item.key}</span>

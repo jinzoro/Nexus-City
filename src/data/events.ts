@@ -76,6 +76,14 @@ const TEMPLATES: Template[] = [
     message: (d) => `Night market exceeds capacity in ${d}. Crowd control requested at the east gate.`,
   },
   {
+    type: 'crime',
+    title: 'CRIME SPIKE',
+    severity: 'warning',
+    duration: [22, 38],
+    district: true,
+    message: (d) => `Patrol reports a spike in theft and unlicensed trade across ${d}. Civic stability is dented.`,
+  },
+  {
     type: 'weather',
     title: 'ATMOSPHERE SHIFT',
     severity: 'info',

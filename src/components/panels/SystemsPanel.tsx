@@ -1,4 +1,5 @@
 import type { QualityLevel } from '../../types'
+import { DISTRICTS } from '../../data/city'
 import { useCityStore } from '../../state/useCityStore'
 import { formatPercent, Meter, SectionLabel, severityColor } from '../ui'
 import { Icon } from '../Icons'
@@ -30,6 +31,9 @@ export function SystemsPanel() {
   const events = useCityStore((s) => s.events)
   const quality = useCityStore((s) => s.quality)
   const setQuality = useCityStore((s) => s.setQuality)
+  const economy = useCityStore((s) => s.economy)
+  const workerLayers = useCityStore((s) => s.workerLayers)
+  const setWorkerLayers = useCityStore((s) => s.setWorkerLayers)
 
   if (!city) return null
 
@@ -81,6 +85,17 @@ export function SystemsPanel() {
               </span>
               <i className="toggle-switch" />
             </button>
+            <button
+              className={`toggle-row ${workerLayers ? 'toggle-row--on' : ''}`}
+              onClick={() => setWorkerLayers(!workerLayers)}
+            >
+              <Icon name="systems" size={15} />
+              <span>
+                <strong>WORKER LAYERS</strong>
+                <small>{workerLayers ? 'OFFSCREEN CANVAS ACTIVE' : 'MAIN THREAD ONLY'}</small>
+              </span>
+              <i className="toggle-switch" />
+            </button>
           </div>
 
           <SectionLabel>RENDER QUALITY</SectionLabel>
@@ -114,11 +129,43 @@ export function SystemsPanel() {
             <Meter label="TRAFFIC FLOW" value={stats.traffic} color="#ff4fa3" />
           </div>
 
+          <SectionLabel>DISTRICT ECONOMY</SectionLabel>
+          <div className="economy-head">
+            <div><span>LEDGER</span><strong>{Math.round(economy.credits).toLocaleString('en-US')} CR</strong></div>
+            <div><span>INCOME</span><strong>{Math.round(economy.incomePerMin)} CR/M</strong></div>
+            <div><span>DEMAND</span><strong>{Math.round(economy.demand)} MW</strong></div>
+            <div><span>SUPPLY</span><strong style={{ color: economy.supply < economy.demand ? '#ff4f6d' : '#63ff9b' }}>{Math.round(economy.supply)} MW</strong></div>
+          </div>
+          <div className="economy-list">
+            {DISTRICTS.map((d) => {
+              const row = economy.districts[d.id]
+              const short = row.supply / Math.max(1, row.demand) < 0.92
+              return (
+                <div key={d.id} className="economy-row">
+                  <span className="economy-row__code" style={{ color: d.color }}>{d.code}</span>
+                  <span className="economy-row__name">{d.name}</span>
+                  <span className="economy-row__bar">
+                    <i style={{ width: `${Math.min(100, (row.income / 120) * 100)}%`, background: d.color }} />
+                  </span>
+                  <span className="economy-row__income">{Math.round(row.income)} CR/M</span>
+                  <span className="economy-row__stability" style={{ color: short ? '#ff4f6d' : '#63ff9b' }}>
+                    {short ? 'SHORT' : `${Math.round(row.stability)}%`}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+          <p className="settings-note">
+            Blackouts drain supply, festivals spike demand, and sustained shortfalls raise crime and
+            drag stability down. Failures cascade: grid faults snarl signals, gridlock invites crime,
+            and raids hit the substations next.
+          </p>
+
           <SectionLabel>RUNTIME</SectionLabel>
           <div className="runtime-grid">
             <div><span>FRAME RATE</span><strong style={{ color: fps >= 50 ? '#63ff9b' : fps >= 30 ? '#ffb347' : '#ff4f6d' }}>{fps} FPS</strong></div>
             <div><span>VISIBLE NODES</span><strong>{city.buildings.filter((b) => b.landmark).length} LM</strong></div>
-            <div><span>POWER DRAW</span><strong>{formatPercent(72 + Math.sin(fps) * 4, 1)}</strong></div>
+            <div><span>GRID COVERAGE</span><strong>{formatPercent((economy.supply / Math.max(1, economy.demand)) * 100, 1)}</strong></div>
             <div><span>ACTIVE EVENTS</span><strong>{events.length}</strong></div>
           </div>
 

@@ -37,7 +37,11 @@ It targets desktop first but is responsive down to 320 px wide.
 
 ## What the user experiences
 
-1. **Intro** — boot sequence over the city. While `generateCity()` compiles, the
+1. **Landing** — animated entry site over the live city backdrop: brand hero with
+   LOGIN / CREATE CITIZEN CTAs (auth modal), sector showcase, city telemetry and
+   faction teasers. When Supabase env vars are absent the CTA becomes ENTER AS
+   GUEST. A successful sign-in crossfades into the boot sequence.
+2. **Intro** — boot sequence over the city. While `generateCity()` compiles, the
    button reads COMPILING… and is disabled; it unlocks the moment the city data
    is ready ("COMPILING CAVERN TOPOLOGY — SEED LOCK" status line).
 2. **City overview** — thousands of lit towers, elevated rail, traffic, drones,
@@ -70,7 +74,8 @@ It targets desktop first but is responsive down to 320 px wide.
 | `Ctrl/⌘ + K` or `/` | Search palette and `>` commands |
 | `M` `X` `T` `Y` `N` `P` `G` | Map / Sectors / Transit / Systems / Messages / Profile / Settings |
 | `W A S D` / arrows | Walk your citizen (screen-relative, citizen mode) |
-| `Shift` (hold) | Sprint (2× walk speed) |
+| `Shift` (hold) | Sprint (7.2 vs 3.6 cells/s, with momentum easing) |
+| `L` | Locate my citizen and lock the camera on them |
 | `O` | City overview |
 | `C` | Toggle citizen / survey mode (player avatar) |
 | `0` | Reset view |
@@ -81,9 +86,11 @@ It targets desktop first but is responsive down to 320 px wide.
 | `?` | Field manual (tabbed help overlay) |
 | `Esc` | Close search → facility → panel → selection → entity |
 | Click building | Open node panel |
+| ENTER FACILITY while your avatar is adjacent | Enter on foot (walk the floor plan with `WASD`, click occupants to talk) |
 | Double-click building | Focus building |
 | Click citizen / vehicle / train | Citizens' Signal card (follow / re-center) |
-| Double-click open ground (citizen mode) | Walk your avatar to that cell |
+| Double-click open ground (citizen mode) | A* walk to that cell (routes around lots) |
+| LOCATE button (side rail / player HUD) | Centre + auto-lock the camera on your citizen |
 | MESSAGES > CIVIC ACTIONS button | Arm (click 1) → fire event (click 2); mouse-leave disarms |
 
 Search palette commands also fire civic actions: `> blackout`, `> festival`,
@@ -119,8 +126,13 @@ src/
                              train stations, generation
     personality.ts           Facade/crown/storefront/quirk tables
     events.ts                Event templates + createEventForType factory
+    dialogue.ts              Branching interior NPC conversations (lore/faction
+                             hooks per archetype)
     world.ts                 Factions, GOALS, codex entries, news, entity
                              profiles, default bookmarks
+  sim/
+    economy.ts               District economy, power demand/supply, crime and
+                             stability + cascade rule table
   engine/
     CityEngine.ts            Camera, input, loop, static caching, hit-testing,
                              entity selection/follow, photo/scan/quality,
@@ -137,18 +149,32 @@ src/
     interior.ts              Deterministic facility floor plans, furniture,
                              wandering occupants + presence avatars
     pixelFont.ts             Procedural 5×7 pixel font for in-world signage
+    staticRender.ts          Shared ground/city/foreground layer builder (main
+                             thread + worker)
+    staticWorker.ts          OffscreenCanvas worker that rasterises static layers
+    walkGrid.ts              Walkability grid + A* pathfinding for the avatar
   state/
-    useCityStore.ts          Zustand UI/app state, lookups, seeds, civic events,
-                             goals, notifications, persistence
+    useCityStore.ts          Zustand UI/app state, lookups, civic events,
+                             goals, notifications, persistence, player follow
+  social/
+    client.ts                Lazy Supabase client + `socialEnabled` gate
+    types.ts                 Domain types (profile, presence, messages)
+    useSocialStore.ts        Auth, profile, presence, floor + DM channels,
+                             idle-lock state and auto-lock preference
+    session.ts               Session manager: activity tracking, idle lock,
+                             token refresh, cross-tab sign-out
+    PixelCitizen.tsx         SVG avatar
   components/
     TopBar, BottomNav, SideControls, EventFeed, HoverTooltip,
     SelectionPanel, SearchPalette, Minimap, Intro, ToastStack, FacilityView,
     EntityCard, PhotoModeBar, NewsTicker, Onboarding, MobileHint, PlayerHud,
-    ui.tsx, Icons.tsx
+    Landing (animated entry site + auth modal), PasswordReset (recovery gate),
+    SessionLock (idle resume gate), SecurityCard, ui.tsx, Icons.tsx
     panels/                  Map, Sectors, Transit, Systems, Messages, Profile
 scripts/
   gen-assets.mjs             Dependency-free generator for og-image.png and the
                              PWA icons (pure Node, hand-rolled PNG encoder)
+.github/workflows/ci.yml     CI: npm ci → tsc -b → vite build on push/PR
 ```
 
 ---
@@ -523,7 +549,7 @@ progress.
   comms-log completion entries + toasts, and is hooked into visitDistrict,
   discover, toggleTracked, discoverCodex, addBookmark and dispatchEvent.
 - PROFILE renders the `CITY GOALS` section (progress bars + ✓ when done).
-  `goalsDone` (and the seed) persist in `nexus-city-progress-v1`.
+  `goalsDone` persists in `nexus-city-progress-v1`.
 - Festival goal counts `festivalsThrown`, incremented inside `dispatchEvent`.
 
 ### City seed (code-only)
@@ -610,9 +636,10 @@ State is centralized in `state/useCityStore.ts` (Zustand): selected/hovered
 building, selected entity + follow, photo/scan modes, quality, bookmarks,
 faction reputation, codex, news, onboarding/help, active panel, search,
 facility, camera info, events/logs, weather, stats, clock, audio, overlays,
-discovery/tracking, FPS, city seed + civic actions + goals, and O(1) lookup
+discovery/tracking, FPS, civic actions + goals, and O(1) lookup
 maps. A curated slice of this state persists to `localStorage` under
-`nexus-city-progress-v1` (including `seed` and `goalsDone`).
+`nexus-city-progress-v1` (including `goalsDone`; the seed is a code constant
+and is never persisted).
 
 When a selection is open the app gets `.app--selection`, which shifts side
 controls and minimap left on desktop; on mobile the panel becomes a bottom
@@ -745,8 +772,94 @@ Newer batch, verified live via console/state checks:
 - 390 px and 320 px harness: zero horizontal overflow with the full HUD
   mounted.
 
-Bundle size: ~546 kB main JS + ~234 kB lazy Supabase chunk / ~99 kB CSS
-(≈170 kB / 61 kB / 16.8 kB gzip).
+Bundle size: ~593 kB main JS + ~234 kB lazy Supabase chunk + ~54 kB worker /
+~115 kB CSS (≈185 kB / 61 kB / 19.9 kB gzip).
+
+### Priority batch (entry, economy, interiors, social, auth, worker, CI)
+
+- **Entry** — the hard auth gate is now an animated landing page
+  (`components/Landing.tsx`) using the same city engine as a dimmed, non-interactive
+  backdrop: hero + CTAs, nine-sector showcase, feature and faction sections, scroll
+  cue and motion — all disabled under `prefers-reduced-motion`. LOGIN / CREATE
+  CITIZEN open `AccountGate` in an accessible modal (focus trap, Esc, backdrop close,
+  focus restored to the trigger). Successful sign-in crossfades into the boot
+  sequence; deep links (`#node=`, `#cell=`, `#view=`) skip the intro. Without
+  Supabase env vars the landing offers **ENTER AS GUEST**, so the city stays
+  playable offline.
+- **Economy** — `sim/economy.ts` models per-district income, demand and supply.
+  `tickEconomy` runs every 3 s once the city is live; SYSTEMS shows the district
+  ledger, and CORE HEALTH reads power / stability / traffic from it.
+- **Cascades** — `CASCADE_RULES` chains power → transit → crime → power with delays
+  and a per-source de-dupe set. Chains go through `dispatchEvent`, so news, toasts,
+  reputation, weather sync and goals stay consistent. `CityEvent` gained `crime`.
+- **Interiors** — entering a facility while the avatar is within 2.4 cells of the
+  lot starts ON FOOT: WASD/arrows walk the plan with axis-separated collision and
+  occupant avoidance. Clicking an occupant opens a per-archetype dialogue tree
+  (`data/dialogue.ts`); choices log codex entries or raise faction standing.
+- **Social** — ★ watchlist persisted in `nexus.friends` with ONLINE/OFFLINE and a
+  JUMP camera action; DM unread counts computed from `direct_messages` against
+  `nexus.dmSeen`, shown per-thread and on the MESSAGES nav badge; typing broadcasts
+  on the DM channel render a live “is typing” line.
+- **Auth** — FORGOT ACCESS CODE? on the gate sends a Supabase recovery email;
+  `#...type=recovery` (or a `PASSWORD_RECOVERY` event) opens the ACCESS RECOVERY
+  gate, which writes a new password and restores the session.
+- **Worker** — `staticWorker.ts` rasterises ground/city/foreground on an
+  OffscreenCanvas and transfers ImageBitmaps back. It is only used after the camera
+  has been idle for ~180 ms; while panning the main thread renders as before, so
+  static layers never lag behind vehicles and pedestrians. SYSTEMS > WORKER LAYERS
+  toggles it (persisted); unsupported browsers fall back silently.
+- **CI** — `.github/workflows/ci.yml` runs `npm ci`, `tsc -b` and `npm run build`
+  on every push and pull request.
+
+Verified for this batch: `tsc -b` clean and `npm run build` succeeds (main
+581.8 kB / 181.6 kB gzip, CSS 113.7 kB / 19.6 kB gzip, `staticWorker` 54.2 kB
+chunk).
+
+A later headless-Chromium pass against the production build confirmed: the landing
+renders with its live canvas backdrop, nine districts and zero horizontal overflow
+at 1440 and 320 px (the landing scrolls internally at 320); the auth modal opens
+with `aria-modal` and closes on Esc; and, with the Supabase env vars blanked so the
+guest CTA is offered, ENTER AS GUEST → intro COMPILING gate → city boot runs with
+no page exceptions, all seven nav tabs open their panel and the search palette
+responds. Still unexercised without project credentials: recovery email, unread
+query, typing broadcasts, watchlist online status and session locking.
+
+### Session, movement + readability batch
+
+- **Session management** — `social/session.ts` is attached once from `App`. It
+  tracks real activity (pointer, key, wheel, touch; throttled to 5 s), locks the
+  console after the configured idle window (5/15/30/60 min, default 30, OFF
+  available; persisted as `nexus.autoLock`), refreshes the Supabase token when it
+  is within 5 min of expiry and on tab return, and mirrors sign-out across tabs
+  through a `nexus.session` BroadcastChannel. `SessionLock` re-authenticates with
+  the account password before revealing the city; PROFILE → SECURITY has the
+  auto-lock select, LOCK NOW and session age, next to SIGN OUT EVERYWHERE.
+- **Movement 2.0** — walk/sprint are 3.6/7.2 cells/s with exponential momentum
+  easing (no instant stops), and double-click now runs A* (`walkGrid.findPath`)
+  to the nearest walkable cell, following waypoints around lots instead of
+  beelining into a wall. WASD still cancels a queued walk immediately.
+- **Locate + camera lock** — `locatePlayer` (side rail crosshair, LOCATE in the
+  PlayerHud, or `L`) closes any facility view, switches survey → citizen, and
+  locks the camera to the avatar with smooth follow. Manual drag/pinch,
+  double-click focus and following a citizen/train release the lock; the HUD
+  reads `CAM LOCK` while it is on. Works for guests too (side rail).
+- **Police overhaul** — ground traffic now includes `police` cruisers (~5% of the
+  520 vehicles) drawn with a white door band, red nose chevron, alternating
+  roof light bar and an in-world `POLICE` tag; patrol aircraft are ~3× larger than
+  flyers with twin light pods, a searchlight cone, a tag at street zoom and a 2 px
+  red/blue blip at overview zoom. Their entity card reads `CIVIC PATROL`.
+- **Readability + responsive type** — UI uses a readable system monospace stack
+  (`--font-display` keeps Silkscreen for headings), every previously 6–8 px label
+  is now 10–11 px and body copy is 14–15 px, font smoothing is on, and the layout
+  adds larger touch targets, wrapping player actions, a hidden coord-help rail on
+  phones and scrollable auth/panel surfaces on short viewports.
+
+Verified: `tsc -b` clean, `npm run build` succeeds, headless Chromium boots the
+landing → guest → city flow with no page exceptions, and the economy/cascade state
+checks from the previous batch still pass. The idle-lock and cross-tab sign-out
+paths could not be exercised against a live Supabase project (no credentials), and
+the police/typography changes were checked by layout measurements and DOM overflow
+checks at 1440 / 900 / 390 / 320 px rather than a visual screenshot review.
 
 Player avatar batch: verified live in browser with a test citizen account
 (sign-in, session restore, intro gate). Confirmed: PlayerHud render (avatar,
@@ -758,8 +871,8 @@ opens the node record (central spire), STOP halts a walk mid-stride.
 `npm run build` compiles clean (tsc + Vite).
 
 Movement / help / interiors batch: verified live in browser with the test
-citizen account. Confirmed: WASD + arrows walk screen-relative (3.2 cells/s,
-Shift sprint 6.4 measured), wall collision stops exactly at lot boundaries,
+citizen account. Confirmed: WASD + arrows walk screen-relative (superseded by the
+3.6/7.2 momentum model below), wall collision stops exactly at lot boundaries,
 `S` no longer opens SECTORS (`X` does), keys clear on keyup/blur and walking
 pauses behind overlays; red LOG OUT on the PlayerHud signs out to the gate
 and sign-in restores the session; `?` opens the eight-tab FIELD MANUAL and
@@ -866,6 +979,24 @@ PROFILE > IDENTITY > CITIZEN HANDLE.
 
 **No server needed** — Supabase Realtime handles presence + broadcast. The app no-ops gracefully if the env vars are missing.
 
+### Session, movement & readability
+- [x] **Session management** — idle auto-lock with password resume, token refresh
+      near expiry / on tab return, cross-tab sign-out, session age in SECURITY
+- [x] **Movement 2.0** — momentum easing, 3.6 / 7.2 walk-sprint split, A* click-to-
+      walk that routes around building lots
+- [x] **Locate avatar + camera lock** — LOCATE button (`L`) recentres on the citizen
+      and locks the camera until manual pan or another focus
+- [x] **Police overhaul** — readable patrol cruisers and aircraft with light bars,
+      searchlights and in-world `POLICE` tags at street zoom
+- [x] **Readability + responsive type** — readable monospace UI stack, pixel face
+      only for headings, 10 px minimum labels (was 6–8 px), larger touch targets
+- [ ] **Touch walk stick** — virtual joystick for coarse-pointer users instead of
+      relying on double-tap-to-walk + WASD
+- [ ] **Session device list** — show the other active sessions from Supabase and
+      revoke them individually rather than only SIGN OUT EVERYWHERE
+- [ ] **Police behaviour** — patrols respond to crime cascades (dispatch to the
+      affected district, visible pursuit) instead of being ambient traffic
+
 ### Bigger features
 - [x] Live citizen accounts + per-building floor channels + 1:1 DMs — **Supabase Realtime**
   (offline graceful degrade; no backend server required)
@@ -887,8 +1018,8 @@ PROFILE > IDENTITY > CITIZEN HANDLE.
 ## Roadmap: Extended Ideas
 
 ### Simulation depth
-- [ ] **Economy** — district income, power demand and supply that affect each other
-- [ ] **Cascading events** — blackout → traffic jams → crime spike → stability drop
+- [x] **Economy** — district income, power demand and supply that affect each other
+- [x] **Cascading events** — blackout → traffic jams → crime spike → stability drop
 - [ ] **Population cycles** — commuters fill corporate districts by day, entertainment by night
 - [ ] **Persistent NPCs with routines** (home → work → bar), click to follow one
 - [ ] **Crime / security layer** with patrol drones
@@ -919,10 +1050,10 @@ PROFILE > IDENTITY > CITIZEN HANDLE.
   persisted with the rest of the preferences
 
 ### Tech / quality
-- [ ] Move rendering to an **OffscreenCanvas worker** to free the main thread
+- [x] Move rendering to an **OffscreenCanvas worker** to free the main thread
 - [ ] **Chunked pedestrian updates** (dirty-region approach, see Performance notes)
 - [ ] **Tests for `generateCity()`** — same seed must produce identical output
-- [ ] **GitHub Actions** — build and type-check on every push
+- [x] **GitHub Actions** — build and type-check on every push
 - [ ] **Error boundary** with a themed "SYSTEM FAULT" screen
 - [ ] **Accessibility** — keyboard focus styles on the HUD, ARIA labels, colorblind-safe palette option
 - [ ] **PWA offline shell** — service worker caches fonts + app shell so the city
@@ -934,10 +1065,12 @@ PROFILE > IDENTITY > CITIZEN HANDLE.
 - [ ] **i18n scaffold** — central string table so HUD / manual can be localized
 
 ### Social / community
-- [ ] **Friends + follow** — friend list with online status and a jump-to-friend camera
+- [x] **Friends + follow** — friend list with online status and a jump-to-friend camera
+  (implemented as a persisted local watchlist: ★ on any operator, FRIENDS section
+  with ONLINE/OFFLINE and JUMP; mutual friend requests are still open)
 - [ ] **Citizen profile cards** — click a presence head to see wardrobe, handle,
   faction and joined date; visit their avatar in the world
-- [ ] **DM unread badges + typing indicator** — nav badge, per-thread unread counts
+- [x] **DM unread badges + typing indicator** — nav badge, per-thread unread counts
   and a live "…is typing" line
 - [ ] **Reactions + emotes** — quick reacts on floor/DM messages and an avatar emote
   wheel (wave / dance / sit)
@@ -946,21 +1079,22 @@ PROFILE > IDENTITY > CITIZEN HANDLE.
   standing-gated dispatch missions
 
 ### Account / auth
-- [ ] **Forgot password / reset** — email reset flow from the gate
-- [ ] **Self-service account** — change email / password and delete account in
+- [x] **Forgot password / reset** — email reset flow from the gate
+- [x] **Self-service account** — change email / password and delete account in
   SETTINGS > ACCOUNT
 - [ ] **OAuth providers** — optional Google / Discord sign-in beside email
 - [ ] **Session expiry handling** — graceful re-auth prompt instead of a silent drop
   back to the gate
 
 ### Player & interiors
-- [ ] **Walk into buildings** — the avatar enters a facility on foot and walks the
+- [x] **Walk into buildings** — the avatar enters a facility on foot and walks the
   floor plan (interior collision + NPC avoidance)
-- [ ] **NPC dialogue** — click an interior NPC for a short branching conversation /
+- [x] **NPC dialogue** — click an interior NPC for a short branching conversation /
   lore / quest hook
 - [ ] **Elevator transitions** — animated lift ride between floors instead of an
   instant swap
-- [ ] **Click-to-walk pathfinding** — A* around building lots instead of axis-slide
+- [x] **Click-to-walk pathfinding** — A* around building lots instead of axis-slide
+      (`engine/walkGrid.ts`)
 - [ ] **Interior interactions** — sit at a desk, use a terminal, buy from a stall;
   small persistent state changes
 - [ ] **Gamepad + mobile joystick** — controller support and an on-screen stick for
@@ -985,27 +1119,27 @@ PROFILE > IDENTITY > CITIZEN HANDLE.
 - [ ] **Leaderboard** — opt-in civic ranking (discoveries, goals) via Supabase
 
 ### Landing / entry experience
-- [ ] **Animated landing website + auth popup** — replace the current fullscreen hard
+- [x] **Animated landing website + auth popup** — replace the current fullscreen hard
   gate with a polished, animated entry/marketing site. LOGIN / SIGN UP buttons open
   the auth form in a modal **popup** instead of an inline gate. Supersedes the
   original "no landing page" decision once shipped.
-  - [ ] **Hero** — full-viewport NEXUS brand hero over the live city canvas (dimmed /
+  - [x] **Hero** — full-viewport NEXUS brand hero over the live city canvas (dimmed /
     depth-blurred) or a looping pixel-art flythrough; logo, tagline, two CTAs
     (LOGIN, CREATE CITIZEN) and a scroll cue
-  - [ ] **Auth modal** — reuse `AccountGate` (sign-in / create tabs, handle, email
+  - [x] **Auth modal** — reuse `AccountGate` (sign-in / create tabs, handle, email
     confirmation pending + resend) inside an animated dialog: focus trap, Esc /
     backdrop close, open/close transition, `aria-modal`, focus returned to the CTA
-  - [ ] **Scroll sections** — feature highlights, district showcase, live city stats,
+  - [x] **Scroll sections** — feature highlights, district showcase, live city stats,
     screenshot gallery, faction / codex teasers, footer with links
-  - [ ] **Motion** — parallax layers, neon flicker, scanline / CRT overlay,
+  - [x] **Motion** — parallax layers, neon flicker, scanline / CRT overlay,
     reveal-on-scroll, walking pixel citizens, news-ticker marquee; all gated behind
     `prefers-reduced-motion`
-  - [ ] **Auth handoff** — on success, crossfade from the landing into the existing
+  - [x] **Auth handoff** — on success, crossfade from the landing into the existing
     intro boot sequence; signed-in visitors and `#node=` / `#cell=` deep links skip
     straight to the city
-  - [ ] **Responsive + a11y** — mobile-first layout, keyboard-navigable CTAs and
+  - [x] **Responsive + a11y** — mobile-first layout, keyboard-navigable CTAs and
     modal, visible focus rings, reduced-motion fallbacks
-  - [ ] **Tech** — keep the single Canvas engine as the backdrop (no new render
+  - [x] **Tech** — keep the single Canvas engine as the backdrop (no new render
     deps); CSS / Web Animations for motion; lazy-load below-fold sections; preserve
     Supabase handle-metadata + redirect-URL behaviour
 

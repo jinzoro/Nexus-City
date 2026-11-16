@@ -10,14 +10,28 @@ interface AccountGateProps {
   }
   error?: string | null
   disabled?: boolean
+  /** Which tab the modal should open on. */
+  initialMode?: 'in' | 'up'
 }
 
-export function AccountGate({ social, error, disabled = false }: AccountGateProps) {
-  const [mode, setMode] = useState<'in' | 'up'>('in')
+export function AccountGate({ social, error, disabled = false, initialMode = 'in' }: AccountGateProps) {
+  const [mode, setMode] = useState<'in' | 'up'>(initialMode)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [handle, setHandle] = useState('')
-  const { signupPending, resendCooldownUntil, resendStatus, resendConfirmation, cancelSignup } = useSocialStore()
+  const [forgot, setForgot] = useState(false)
+  const [resetEmail, setResetEmail] = useState('')
+  const {
+    signupPending,
+    resendCooldownUntil,
+    resendStatus,
+    resendConfirmation,
+    cancelSignup,
+    sendPasswordReset,
+    resetBusy,
+    resetNotice,
+    clearResetNotice,
+  } = useSocialStore()
 
   const validEmail = email.trim().length > 3 && email.includes('@')
   const validPassword = password.length >= 6
@@ -106,6 +120,60 @@ export function AccountGate({ social, error, disabled = false }: AccountGateProp
             <p className="login-gate__hint">
               EMAIL CONFIRMATION IS ON — CONFIRM YOUR ADDRESS, THEN SIGN IN.
             </p>
+          ) : null}
+          {mode === 'in' && !disabled ? (
+            forgot ? (
+              <div className="login-gate__forgot">
+                <p className="login-gate__hint">
+                  WE SEND A ONE-TIME RECOVERY LINK. ENTER THE EMAIL ON YOUR CITIZEN RECORD.
+                </p>
+                <input
+                  placeholder="EMAIL"
+                  type="email"
+                  value={resetEmail}
+                  onChange={(e) => setResetEmail(e.target.value)}
+                  autoComplete="email"
+                  disabled={resetBusy}
+                />
+                <div className="login-gate__actions">
+                  <button
+                    type="button"
+                    disabled={!resetEmail.includes('@') || resetBusy}
+                    onClick={() => void sendPasswordReset(resetEmail)}
+                  >
+                    {resetBusy ? 'SENDING…' : 'SEND RECOVERY LINK'}
+                  </button>
+                  <button
+                    type="button"
+                    className="login-gate__secondary"
+                    onClick={() => {
+                      setForgot(false)
+                      clearResetNotice()
+                    }}
+                  >
+                    BACK
+                  </button>
+                </div>
+                {resetNotice ? (
+                  <div className={resetNotice.tone === 'error' ? 'login-gate__error' : 'login-gate__hint'}>
+                    {resetNotice.text}
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="login-gate__forgot-link"
+                onClick={() => {
+                  social.clearAuthError?.()
+                  clearResetNotice()
+                  setResetEmail(email)
+                  setForgot(true)
+                }}
+              >
+                FORGOT ACCESS CODE?
+              </button>
+            )
           ) : null}
         </>
       )}

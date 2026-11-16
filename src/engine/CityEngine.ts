@@ -12,7 +12,6 @@ import type {
 } from '../types'
 import { TILE_H, TILE_W, districtForCell, getDistrict } from '../data/city'
 import { trainEntity, vehicleEntity, pedestrianEntity } from '../data/world'
-import { drawBuilding, drawProp, drawRailSegment } from './buildingRenderer'
 import {
   drawCeilingDynamic,
   drawAircraft,
@@ -33,7 +32,8 @@ import {
   drawDistrictAtmosphere,
   drawStationCrowds,
 } from './dynamicRenderer'
-import { renderForeground, renderGround } from './groundRenderer'
+import { renderStaticLayers } from './staticRender'
+import { findPath, nearestWalkable } from './walkGrid'
 import { type Camera, type View, clamp, getBuildingBounds, isBoundsVisible, isPointInBounds, project } from './renderUtils'
 import { useCityStore } from '../state/useCityStore'
 import { useSocialStore } from '../social/useSocialStore'
@@ -43,6 +43,7 @@ interface EngineCallbacks {
   onSelect?: (building: Building | null) => void
   onSelectEntity?: (entity: SelectedEntity | null) => void
   onFollowChange?: (following: boolean) => void
+  onPlayerFollowChange?: (following: boolean) => void
   onCamera?: (info: CameraInfo) => void
   onAutoQuality?: (pixelScale: number) => void
 }
@@ -71,10 +72,12 @@ interface PointerInfo {
   moved: boolean
 }
 
-type StaticEntry =
-  | { depth: number; kind: 'building'; building: Building }
-  | { depth: number; kind: 'prop'; prop: import('../types').Prop }
-  | { depth: number; kind: 'rail'; line: import('../types').RailLine; from: number; to: number }
+interface WorkerLayers {
+  key: string
+  ground: ImageBitmap
+  city: ImageBitmap
+  fg: ImageBitmap
+}
 
 const MIN_ZOOM = 0.135
 const MAX_ZOOM = 2.65
@@ -114,18 +117,29 @@ export class CityEngine {
   private weather: ViewWeather = 'clear'
   private selectedEntity: { kind: EntityKind; id: string } | null = null
   private followTarget: FollowTarget = null
+  private playerFollow = false
+  private moveVel = { x: 0, y: 0 }
   private pedMap: Map<string, import('../types').Pedestrian>
   private vehicleMap: Map<string, import('../types').Vehicle>
   private trainMap: Map<string, import('../types').Train>
   private buildingMask: Uint8Array | null = null
   private dwellMap = new Map<string, number>()
   private stationMap = new Map<string, number[]>()
+  private layerWorker: Worker | null = null
+  private workerLayers: WorkerLayers | null = null
+  private workerBusy = false
+  private workerEnabled = false
+  private workerRequestId = 0
+  private lastCameraChange = 0
+  private lastCameraKey = ''
   private pointers = new Map<number, PointerInfo>()
   private pinch: { dist: number; midX: number; midY: number; camX: number; camY: number; zoom: number } | null = null
   private drag: { startX: number; startY: number; camX: number; camY: number; moved: boolean } | null = null
   private lastMouse: { x: number; y: number; clientX: number; clientY: number } | null = null
   private lastInfo = 0
   private lastInfoKey = ''
+  private lastInfoX = 0
+  private lastInfoY = 0
   private destroyed = false
   private onWheel = (e: WheelEvent) => this.handleWheel(e)
   private onPointerDown = (e: PointerEvent) => this.handlePointerDown(e)
@@ -195,6 +209,7 @@ export class CityEngine {
 
   destroy() {
     this.destroyed = true
+    this.disposeWorker()
     cancelAnimationFrame(this.raf)
     document.removeEventListener('visibilitychange', this.onVisibility)
     this.canvas.removeEventListener('wheel', this.onWheel)
@@ -236,6 +251,8 @@ export class CityEngine {
     this.height = Math.max(240, Math.round(cssH / this.pixelScale))
     this.canvas.width = this.width
     this.canvas.height = this.height
+    // Bitmaps from the worker are sized to the old buffer — drop them.
+    this.closeWorkerLayers()
     for (const c of [this.groundCanvas, this.cityCanvas, this.fgCanvas]) {
       c.width = this.width
       c.height = this.height
@@ -258,9 +275,14 @@ export class CityEngine {
     this.last = now
     this.time = now / 1000
     this.view.time = this.time
+    const cameraKey = `${this.camera.x}|${this.camera.y}|${this.camera.zoom}`
+    if (cameraKey !== this.lastCameraKey) {
+      this.lastCameraKey = cameraKey
+      this.lastCameraChange = now
+    }
     this.runFpsWatch(now)
-    this.update(dt)
     this.updatePlayer(dt)
+    this.update(dt)
     // Sync the atmosphere section of the view before any layer rendering.
     this.view.daylight = this.daylight
     this.view.weather = this.weather
@@ -275,10 +297,12 @@ export class CityEngine {
     const ctx = this.ctx
     ctx.imageSmoothingEnabled = false
     ctx.clearRect(0, 0, this.width, this.height)
-    ctx.drawImage(this.groundCanvas, 0, 0)
+    const workerLayer =
+      this.workerEnabled && this.workerLayers?.key === this.staticKey() ? this.workerLayers : null
+    ctx.drawImage(workerLayer ? workerLayer.ground : this.groundCanvas, 0, 0)
     drawVehicles(ctx, this.view)
     drawPedestrians(ctx, this.view)
-    ctx.drawImage(this.cityCanvas, 0, 0)
+    ctx.drawImage(workerLayer ? workerLayer.city : this.cityCanvas, 0, 0)
     this.drawPlayer(ctx)
     drawStationCrowds(ctx, this.view)
     drawTrains(ctx, this.view)
@@ -297,7 +321,7 @@ export class CityEngine {
       if (this.selected) drawSelection(ctx, this.view, this.selected, true)
       if (this.hovered && this.hovered !== this.selected) drawSelection(ctx, this.view, this.hovered, false)
     }
-    ctx.drawImage(this.fgCanvas, 0, 0)
+    ctx.drawImage(workerLayer ? workerLayer.fg : this.fgCanvas, 0, 0)
     drawCeilingDynamic(ctx, this.view)
     // day/night, district atmosphere and weather tints removed for crisp pixel output
     // drawDayNight(ctx, this.view)
@@ -348,41 +372,125 @@ export class CityEngine {
     const k = s.moveKeys
     const sx = (k.right ? 1 : 0) - (k.left ? 1 : 0)
     const sy = (k.down ? 1 : 0) - (k.up ? 1 : 0)
-    const speed = (k.sprint ? 6.4 : 3.2) * dt
-    let vx = 0
-    let vy = 0
-    if (sx !== 0 || sy !== 0) {
+    const sprinting = k.sprint && (sx !== 0 || sy !== 0)
+    const speed = (sprinting ? 7.2 : 3.6) * dt
+    const usingKeys = sx !== 0 || sy !== 0
+    let desiredX = 0
+    let desiredY = 0
+    let path = p.path
+    let target = p.target
+
+    if (usingKeys) {
       // screen-relative direction mapped through the inverse iso projection
       const wx = sx / TILE_W + sy / TILE_H
       const wy = sy / TILE_H - sx / TILE_W
       const len = Math.hypot(wx, wy) || 1
-      vx = (wx / len) * speed
-      vy = (wy / len) * speed
-    } else if (p.moving && p.target) {
-      const dx = p.target.x - p.x
-      const dy = p.target.y - p.y
+      desiredX = (wx / len) * speed
+      desiredY = (wy / len) * speed
+      if (path.length || target) {
+        path = []
+        target = null
+      }
+    } else if (p.moving && path.length) {
+      // A* route around building lots, walked waypoint by waypoint.
+      const wp = path[0]
+      const dx = wp.x - p.x
+      const dy = wp.y - p.y
       const dist = Math.hypot(dx, dy)
-      if (dist <= speed) {
-        useCityStore.setState({ player: { ...p, x: p.target.x, y: p.target.y, moving: false, target: null, path: [] } })
+      if (dist < 0.16) {
+        const rest = path.slice(1)
+        useCityStore.setState({ player: { ...p, path: rest, moving: rest.length > 0 || !!target } })
         return
       }
-      vx = (dx / dist) * speed
-      vy = (dy / dist) * speed
-    } else {
+      desiredX = (dx / dist) * speed
+      desiredY = (dy / dist) * speed
+    } else if (p.moving && target) {
+      const dx = target.x - p.x
+      const dy = target.y - p.y
+      const dist = Math.hypot(dx, dy)
+      if (dist < 0.16) {
+        useCityStore.setState({ player: { ...p, x: target.x, y: target.y, moving: false, target: null, path: [] } })
+        this.moveVel = { x: 0, y: 0 }
+        return
+      }
+      desiredX = (dx / dist) * speed
+      desiredY = (dy / dist) * speed
+    }
+
+    // Momentum: ease into and out of movement so walking never snaps.
+    const accel = 1 - Math.exp(-16 * dt)
+    this.moveVel.x += (desiredX - this.moveVel.x) * accel
+    this.moveVel.y += (desiredY - this.moveVel.y) * accel
+    if (Math.abs(this.moveVel.x) < 0.002) this.moveVel.x = 0
+    if (Math.abs(this.moveVel.y) < 0.002) this.moveVel.y = 0
+    const vx = this.moveVel.x
+    const vy = this.moveVel.y
+    if (vx === 0 && vy === 0) {
       if (p.moving) useCityStore.setState({ player: { ...p, moving: false } })
       return
     }
+
     // axis-separated slide against building lots
     let nx = p.x
     let ny = p.y
     if (!this.blockedAt(p.x + vx, p.y)) nx = p.x + vx
+    else this.moveVel.x = 0
     if (!this.blockedAt(nx, p.y + vy)) ny = p.y + vy
+    else this.moveVel.y = 0
     if (nx === p.x && ny === p.y) {
-      useCityStore.setState({ player: { ...p, moving: false, target: null } })
+      this.moveVel = { x: 0, y: 0 }
+      useCityStore.setState({ player: { ...p, moving: false, target: null, path: [] } })
       return
     }
     const facing = Math.abs(nx - p.x) > Math.abs(ny - p.y) ? (nx > p.x ? 'right' : 'left') : ny > p.y ? 'down' : 'up'
-    useCityStore.setState({ player: { ...p, x: nx, y: ny, facing, moving: true, target: sx !== 0 || sy !== 0 ? null : p.target } })
+    useCityStore.setState({ player: { ...p, x: nx, y: ny, facing, moving: true, target, path } })
+  }
+
+  /** Walk to a cell along an A* route instead of beelining into a wall. */
+  private walkPlayerTo(cellX: number, cellY: number) {
+    const mask = this.buildingMask
+    if (!mask) return
+    const s = useCityStore.getState()
+    const goal = nearestWalkable(cellX, cellY, mask, 8) ?? { x: Math.floor(cellX), y: Math.floor(cellY) }
+    // Long cross-city clicks skip A* (the open-list sort is O(n log n) per step)
+    // and walk straight until they hit a wall or reach the cell.
+    const distance = Math.hypot(goal.x - s.player.x, goal.y - s.player.y)
+    const route = distance <= 48 ? findPath(s.player.x, s.player.y, goal.x + 0.5, goal.y + 0.5, mask) : []
+    const path = route.slice(1).map((c) => ({ x: c.x + 0.5, y: c.y + 0.5 }))
+    useCityStore.setState({
+      player: {
+        ...s.player,
+        path,
+        target: { x: goal.x + 0.5, y: goal.y + 0.5 },
+        moving: true,
+      },
+    })
+  }
+
+  setPlayerFollow(on: boolean) {
+    if (this.playerFollow === on) return
+    this.playerFollow = on
+    this.moveVel = { x: 0, y: 0 }
+    if (on) {
+      const p = useCityStore.getState().player
+      this.target = {
+        x: (p.x - p.y) * (TILE_W / 2),
+        y: (p.x + p.y) * (TILE_H / 2),
+        zoom: Math.max(1.5, this.camera.zoom),
+      }
+      this.callbacks.onFollowChange?.(false)
+      this.followTarget = null
+    } else if (!this.followTarget) {
+      this.target = null
+    }
+    this.callbacks.onPlayerFollowChange?.(on)
+    this.dirty = true
+  }
+
+  private stopPlayerFollow() {
+    if (!this.playerFollow) return
+    this.playerFollow = false
+    this.callbacks.onPlayerFollowChange?.(false)
   }
 
   private drawPlayer(ctx: CanvasRenderingContext2D) {
@@ -409,6 +517,15 @@ export class CityEngine {
   }
 
   private update(dt: number) {
+    if (this.playerFollow) {
+      const p = useCityStore.getState().player
+      this.target = {
+        x: (p.x - p.y) * (TILE_W / 2),
+        y: (p.x + p.y) * (TILE_H / 2),
+        zoom: this.target?.zoom ?? Math.max(1.5, this.camera.zoom),
+      }
+      this.dirty = true
+    }
     if (this.followTarget) {
       const entity = this.resolveEntity(this.followTarget.kind, this.followTarget.id)
       if (entity) {
@@ -511,39 +628,132 @@ export class CityEngine {
     return 'running'
   }
 
+  /** Key describing everything the static layers are baked against. */
+  private staticKey() {
+    const c = this.camera
+    return `${c.x.toFixed(2)}|${c.y.toFixed(2)}|${c.zoom.toFixed(3)}|${this.width}x${this.height}|${this.daylight.toFixed(2)}|${this.weather}`
+  }
+
+  private renderStaticLayersMain() {
+    renderStaticLayers(
+      this.view,
+      this.city,
+      this.groundCtx,
+      this.cityCtx,
+      this.fgCtx,
+      this.width,
+      this.height,
+    )
+  }
+
+  /**
+   * Static layer rebuild. When the camera is idle and the worker is enabled we
+   * ask the OffscreenCanvas worker for the next set of layers; while the camera
+   * is moving (or the worker is not available) the main thread renders as
+   * before so panning never lags behind the dynamic entities.
+   */
   private renderStaticLayers() {
-    const view = this.view
-    renderGround(this.groundCtx, view)
-    this.cityCtx.clearRect(0, 0, this.width, this.height)
-    const entries: StaticEntry[] = []
-    for (const b of this.city.buildings) {
-      const bounds = getBuildingBounds(view, b)
-      if (!isBoundsVisible(view, bounds, 20)) continue
-      entries.push({ depth: b.x + b.y + (b.w + b.d) * 0.5, kind: 'building', building: b })
+    if (this.workerEnabled && this.layerWorker) {
+      const idle = performance.now() - this.lastCameraChange > 180
+      const fresh = this.workerLayers?.key === this.staticKey()
+      if (fresh) return
+      if (idle) this.requestWorkerLayers()
     }
-    for (const p of this.city.props) {
-      const pt = project(view, p.x, p.y, 0)
-      if (pt[0] < -40 || pt[0] > this.width + 40 || pt[1] < -40 || pt[1] > this.height + 40) continue
-      entries.push({ depth: p.x + p.y, kind: 'prop', prop: p })
+    this.renderStaticLayersMain()
+  }
+
+  private requestWorkerLayers() {
+    if (!this.layerWorker || this.workerBusy) return
+    this.workerBusy = true
+    this.workerRequestId += 1
+    // Strip the city from the view: the worker already holds its own copy and
+    // cloning 2.5k buildings on every rebuild would defeat the purpose.
+    const { city: _city, ...lightView } = this.view
+    void _city
+    this.layerWorker.postMessage({
+      type: 'render',
+      id: this.workerRequestId,
+      key: this.staticKey(),
+      view: lightView,
+      width: this.width,
+      height: this.height,
+    })
+  }
+
+  private onWorkerLayers = (event: MessageEvent) => {
+    this.workerBusy = false
+    if (this.destroyed) return
+    const msg = event.data as {
+      type?: string
+      key?: string
+      ground?: ImageBitmap
+      city?: ImageBitmap
+      fg?: ImageBitmap
     }
-    for (const line of this.city.rails) {
-      const step = 11
-      for (let from = line.from; from < line.to; from += step) {
-        const to = Math.min(from + step, line.to)
-        const cx = line.axis === 'x' ? (from + to) / 2 : line.coord
-        const cy = line.axis === 'x' ? line.coord : (from + to) / 2
-        const p = project(view, cx, cy, line.z)
-        if (p[0] < -100 || p[0] > this.width + 100 || p[1] < -100 || p[1] > this.height + 100) continue
-        entries.push({ depth: cx + cy, kind: 'rail', line, from, to })
+    if (msg?.type !== 'layers' || !msg.ground || !msg.city || !msg.fg || !msg.key) return
+    this.closeWorkerLayers()
+    this.workerLayers = { key: msg.key, ground: msg.ground, city: msg.city, fg: msg.fg }
+  }
+
+  private closeWorkerLayers() {
+    if (!this.workerLayers) return
+    this.workerLayers.ground.close()
+    this.workerLayers.city.close()
+    this.workerLayers.fg.close()
+    this.workerLayers = null
+  }
+
+  private disposeWorker() {
+    this.closeWorkerLayers()
+    if (this.layerWorker) {
+      this.layerWorker.terminate()
+      this.layerWorker = null
+    }
+    this.workerBusy = false
+  }
+
+  /** Enable/disable the OffscreenCanvas static-layer worker. */
+  setWorkerLayers(on: boolean) {
+    const supported =
+      typeof Worker !== 'undefined' &&
+      typeof OffscreenCanvas !== 'undefined' &&
+      typeof ImageBitmap !== 'undefined'
+    const next = on && supported
+    if (next === this.workerEnabled && this.layerWorker) return
+    this.workerEnabled = next
+    if (!next) {
+      this.disposeWorker()
+      this.dirty = true
+      return
+    }
+    if (!this.layerWorker) {
+      try {
+        const worker = new Worker(new URL('./staticWorker.ts', import.meta.url), { type: 'module' })
+        worker.onmessage = this.onWorkerLayers
+        worker.onerror = () => {
+          this.workerEnabled = false
+          this.disposeWorker()
+          this.dirty = true
+        }
+        // Only the geometry needed by the static layers travels to the worker.
+        worker.postMessage({
+          type: 'init',
+          city: {
+            ...this.city,
+            pedestrians: [],
+            vehicles: [],
+            aircraft: [],
+            drones: [],
+            trains: [],
+            emitters: [],
+          },
+        })
+        this.layerWorker = worker
+      } catch {
+        this.workerEnabled = false
       }
     }
-    entries.sort((a, b) => a.depth - b.depth)
-    for (const entry of entries) {
-      if (entry.kind === 'building') drawBuilding(this.cityCtx, view, entry.building)
-      else if (entry.kind === 'prop') drawProp(this.cityCtx, view, entry.prop)
-      else drawRailSegment(this.cityCtx, view, entry.line, entry.from, entry.to)
-    }
-    renderForeground(this.fgCtx, view)
+    this.dirty = true
   }
 
   private getPos(e: PointerEvent | MouseEvent | WheelEvent) {
@@ -623,6 +833,7 @@ export class CityEngine {
       const worldX = this.pinch.camX + (this.pinch.midX - this.width / 2) / this.pinch.zoom
       const worldY = this.pinch.camY + (this.pinch.midY - this.height / 2) / this.pinch.zoom
       this.breakFollow()
+      this.stopPlayerFollow()
       this.target = null
       this.camera.zoom = newZoom
       this.camera.x = worldX - (midX - this.width / 2) / newZoom
@@ -638,6 +849,7 @@ export class CityEngine {
       if (Math.hypot(dx, dy) > 3) this.drag.moved = true
       if (this.drag.moved) {
         this.breakFollow()
+        this.stopPlayerFollow()
         this.target = null
         this.camera.x = this.drag.camX - dx / this.camera.zoom
         this.camera.y = this.drag.camY - dy / this.camera.zoom
@@ -705,7 +917,7 @@ export class CityEngine {
         this.callbacks.onSelect?.(lot)
         this.focusBuilding(lot, Math.max(1.25, this.camera.zoom * 1.8))
       } else {
-        useCityStore.getState().playerMoveTo(cellX, cellY)
+        this.walkPlayerTo(cellX, cellY)
       }
       return
     }
@@ -824,6 +1036,7 @@ export class CityEngine {
   }
 
   focusEntity(kind: EntityKind, id: string, follow = false) {
+    this.stopPlayerFollow()
     const entity = this.resolveEntity(kind, id)
     if (!entity) return
     this.selectedEntity = { kind, id }
@@ -855,6 +1068,7 @@ export class CityEngine {
   }
 
   setFollowingEntity(target: FollowTarget) {
+    if (target) this.stopPlayerFollow()
     this.followTarget = target
     if (target) {
       const entity = this.resolveEntity(target.kind, target.id)
@@ -962,8 +1176,14 @@ export class CityEngine {
     const district = districtForCell(cellX, cellY)
     const level: CameraInfo['level'] =
       this.camera.zoom < 0.25 ? 'OVERVIEW' : this.camera.zoom < 0.78 ? 'DISTRICT' : this.camera.zoom < 1.65 ? 'STREET' : 'INTERIOR'
-    const key = `${district}-${level}-${Math.round(cellX / 4)}-${Math.round(cellY / 4)}`
-    if (key === this.lastInfoKey) return
+    const key = `${district}-${level}-${Math.round(cellX / 4)}-${Math.round(cellY / 4)}-${Math.round(this.camera.zoom * 20)}`
+    // Also re-emit while the camera is still travelling (smooth follow would
+    // otherwise freeze the coord rail until it crossed a cell boundary).
+    const moved = Math.hypot(sx - this.lastInfoX, sy - this.lastInfoY) > 40
+    if (key === this.lastInfoKey && !moved) return
+    this.lastInfoKey = key
+    this.lastInfoX = sx
+    this.lastInfoY = sy
     this.lastInfoKey = key
     this.callbacks.onCamera?.({
       x: sx,
@@ -978,6 +1198,7 @@ export class CityEngine {
 
   focusCell(cellX: number, cellY: number, zoom = this.camera.zoom, animate = true) {
     this.breakFollow()
+    this.stopPlayerFollow()
     const sx = (cellX - cellY) * (TILE_W / 2)
     const sy = (cellX + cellY) * (TILE_H / 2)
     const next = { x: sx, y: sy, zoom: clamp(zoom, MIN_ZOOM, MAX_ZOOM) }

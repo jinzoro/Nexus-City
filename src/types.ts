@@ -234,7 +234,7 @@ export interface Hologram {
   label: string
 }
 
-export type VehicleType = 'car' | 'taxi' | 'bus' | 'truck' | 'bike' | 'van'
+export type VehicleType = 'car' | 'taxi' | 'bus' | 'truck' | 'bike' | 'van' | 'police'
 
 export interface Vehicle {
   id: string
@@ -351,7 +351,16 @@ export interface OuterBlock {
 
 export interface CityEvent {
   id: string
-  type: 'power' | 'festival' | 'rain' | 'transit' | 'network' | 'construction' | 'market' | 'weather'
+  type:
+    | 'power'
+    | 'festival'
+    | 'rain'
+    | 'transit'
+    | 'network'
+    | 'construction'
+    | 'market'
+    | 'weather'
+    | 'crime'
   title: string
   message: string
   district?: DistrictId

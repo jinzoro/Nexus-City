@@ -1198,7 +1198,7 @@ export function generateCity(seed: number = CITY_SEED_DEFAULT): CityData {
 
   const vehicles: Vehicle[] = []
   const carColors = ['#22e6ff', '#ff4fa3', '#ffd68a', '#f4f7ff', '#ff8a2a', '#63ff9b', '#b98cff']
-  const vehicleTypes: VehicleType[] = ['car', 'car', 'car', 'taxi', 'car', 'van', 'bus', 'truck', 'bike']
+  const vehicleTypes: VehicleType[] = ['car', 'car', 'car', 'taxi', 'car', 'van', 'bus', 'truck', 'bike', 'police']
   for (let i = 0; i < 520; i++) {
     const axis = rng() < 0.5 ? 'x' : 'y'
     const road = Math.floor(rng() * BLOCK_COUNT)
@@ -1213,7 +1213,16 @@ export function generateCity(seed: number = CITY_SEED_DEFAULT): CityData {
       dir: rng() < 0.5 ? 1 : -1,
       speed: type === 'bike' ? 10 + rng() * 7 : type === 'bus' ? 3 + rng() * 2.5 : 5 + rng() * 6,
       type,
-      color: type === 'bus' ? '#ffb347' : type === 'taxi' ? '#ffd84d' : type === 'truck' ? '#63ff9b' : pick(rng, carColors),
+      color:
+        type === 'bus'
+          ? '#ffb347'
+          : type === 'taxi'
+            ? '#ffd84d'
+            : type === 'truck'
+              ? '#63ff9b'
+              : type === 'police'
+                ? '#2b3f66'
+                : pick(rng, carColors),
       phase: rng() * TAU,
     })
   }

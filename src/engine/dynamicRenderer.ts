@@ -183,6 +183,32 @@ export function drawVehicles(ctx: CanvasRenderingContext2D, view: View) {
         const sign = P(0.5, 0, bodyH + roofH)
         ctx.fillRect(Math.round(sign[0]) - 2, Math.round(sign[1]) - 1, 4, 1)
       }
+      if (v.type === 'police') {
+        // High-visibility livery: white door band + chevrons on the nose.
+        poly(
+          [P(0.24, -1.02, 0.25), P(0.72, -1.02, 0.25), P(0.72, -1.02, 0.95), P(0.24, -1.02, 0.95)],
+          'rgba(232,246,255,0.9)',
+          'rgba(0,0,0,0.45)',
+        )
+        poly(
+          [P(0.78, -0.9, 0.1), P(1.01, -0.9, 0.1), P(1.01, -0.9, 0.9), P(0.78, -0.9, 0.9)],
+          '#ff3355',
+          'rgba(0,0,0,0.4)',
+        )
+        // Roof light bar: two halves that alternate red / blue.
+        const barZ = bodyH + roofH + 0.22
+        const flash = Math.sin(view.time * 8 + v.phase) > 0
+        poly([P(0.38, -0.72, barZ), P(0.64, -0.72, barZ), P(0.64, -0.04, barZ), P(0.38, -0.04, barZ)], flash ? '#ff2d55' : '#1c2b4a')
+        poly([P(0.38, 0.04, barZ), P(0.64, 0.04, barZ), P(0.64, 0.72, barZ), P(0.38, 0.72, barZ)], flash ? '#1c2b4a' : '#3d7bff')
+        ctx.save()
+        ctx.globalCompositeOperation = 'lighter'
+        const glow = P(0.5, 0, barZ)
+        ctx.fillStyle = flash ? 'rgba(255,45,85,0.5)' : 'rgba(61,123,255,0.5)'
+        ctx.fillRect(Math.round(glow[0]) - 4, Math.round(glow[1]) - 3, 9, 5)
+        ctx.fillStyle = flash ? 'rgba(255,45,85,0.22)' : 'rgba(61,123,255,0.22)'
+        ctx.fillRect(Math.round(glow[0]) - 9, Math.round(glow[1]) - 6, 19, 11)
+        ctx.restore()
+      }
     }
 
     // lamps
@@ -201,6 +227,19 @@ export function drawVehicles(ctx: CanvasRenderingContext2D, view: View) {
         poly([P(0, -0.9, 0.05), P(1, -0.9, 0.05), P(1, 0.9, 0.05), P(0, 0.9, 0.05)], rgba(v.color, 0.18))
       }
       ctx.restore()
+    }
+
+    // Patrol tag — readable at a glance instead of a 1-pixel beacon.
+    if (v.type === 'police') {
+      const labelY = Math.round(p[1] - Math.max(12, 9 * zoom))
+      drawPixelText(ctx, 'POLICE', Math.round(p[0]), labelY, 1, '#eaf6ff', 'center', 'rgba(4,8,18,0.9)')
+      if (zoom > 0.7) {
+        ctx.save()
+        ctx.globalCompositeOperation = 'lighter'
+        ctx.fillStyle = Math.sin(view.time * 8 + v.phase) > 0 ? 'rgba(255,45,85,0.5)' : 'rgba(61,123,255,0.5)'
+        ctx.fillRect(Math.round(p[0]) - 6, labelY - 4, 13, 1)
+        ctx.restore()
+      }
     }
 
     // headlight cone at close zoom
@@ -343,8 +382,14 @@ export function drawAircraft(ctx: CanvasRenderingContext2D, view: View) {
     if (!visiblePoint(view, p, 30)) continue
     const blink = Math.sin(time * 4 + a.phase) > 0.2
     if (zoom < 0.3) {
-      ctx.fillStyle = blink ? rgba(a.color, 0.9) : 'rgba(255,255,255,0.4)'
-      ctx.fillRect(p[0], p[1], 1, 1)
+      if (a.type === 'police') {
+        // stay identifiable even as a far-off blip
+        ctx.fillStyle = blink ? 'rgba(255,45,85,0.95)' : 'rgba(61,123,255,0.95)'
+        ctx.fillRect(p[0], p[1], 2, 2)
+      } else {
+        ctx.fillStyle = blink ? rgba(a.color, 0.9) : 'rgba(255,255,255,0.4)'
+        ctx.fillRect(p[0], p[1], 1, 1)
+      }
       continue
     }
     ctx.save()
@@ -371,6 +416,50 @@ export function drawAircraft(ctx: CanvasRenderingContext2D, view: View) {
       ctx.fillStyle = rgba(a.color, 0.16)
       ctx.fillRect(p[0] - 9, p[1] + 1, 6, 1)
       ctx.restore()
+    } else if (a.type === 'police') {
+      // Patrol craft: a much larger, high-contrast silhouette with twin light
+      // pods, a searchlight cone and a readable tag.
+      const flash = Math.sin(time * 8 + a.phase) > 0
+      const wing = Math.sin(Math.atan2(a.vy, a.vx)) * 3
+      polygon(
+        ctx,
+        [
+          [p[0] - 6, p[1] + wing],
+          [p[0] - 2, p[1] - 3],
+          [p[0] + 2, p[1] - 3],
+          [p[0] + 6, p[1] + wing],
+          [p[0] + 2, p[1] + 2],
+          [p[0] - 2, p[1] + 2],
+        ],
+        '#16243d',
+        'rgba(150,220,255,0.6)',
+      )
+      ctx.fillStyle = '#dbe9f7'
+      ctx.fillRect(p[0] - 2, p[1] - 1, 4, 2)
+      ctx.fillStyle = flash ? '#ff2d55' : '#3d7bff'
+      ctx.fillRect(p[0] - 7, p[1] + wing, 2, 2)
+      ctx.fillStyle = flash ? '#3d7bff' : '#ff2d55'
+      ctx.fillRect(p[0] + 5, p[1] + wing, 2, 2)
+      ctx.save()
+      ctx.globalCompositeOperation = 'lighter'
+      ctx.fillStyle = flash ? 'rgba(255,45,85,0.4)' : 'rgba(61,123,255,0.4)'
+      ctx.fillRect(p[0] - 9, p[1] + wing - 2, 5, 5)
+      ctx.fillRect(p[0] + 4, p[1] + wing - 2, 5, 5)
+      const beam = ctx.createLinearGradient(p[0], p[1] + 2, p[0], p[1] + 26)
+      beam.addColorStop(0, 'rgba(190,240,255,0.26)')
+      beam.addColorStop(1, 'rgba(190,240,255,0)')
+      ctx.fillStyle = beam
+      ctx.beginPath()
+      ctx.moveTo(p[0] - 1, p[1] + 3)
+      ctx.lineTo(p[0] - 7, p[1] + 26)
+      ctx.lineTo(p[0] + 7, p[1] + 26)
+      ctx.lineTo(p[0] + 1, p[1] + 3)
+      ctx.closePath()
+      ctx.fill()
+      ctx.restore()
+      if (zoom > 0.9) {
+        drawPixelText(ctx, 'POLICE', Math.round(p[0]), Math.round(p[1]) - 9, 1, '#eaf6ff', 'center', 'rgba(4,8,18,0.9)')
+      }
     } else {
       // small isometric flyer
       const dir = Math.atan2(a.vy, a.vx)
@@ -383,7 +472,7 @@ export function drawAircraft(ctx: CanvasRenderingContext2D, view: View) {
           [p[0] + 3, p[1] + wing],
           [p[0], p[1] + 1],
         ],
-        a.type === 'police' ? '#2d3550' : '#243247',
+        '#243247',
         rgba(a.color, 0.8),
       )
       ctx.fillStyle = blink ? 'rgba(180,245,255,0.95)' : rgba(a.color, 0.6)
@@ -399,14 +488,6 @@ export function drawAircraft(ctx: CanvasRenderingContext2D, view: View) {
       ctx.moveTo(p[0], p[1])
       ctx.lineTo(p[0] - a.vx * 2.5, p[1] - a.vy * 2.5)
       ctx.stroke()
-      ctx.restore()
-    }
-    if (a.type === 'police' && zoom > 0.7) {
-      ctx.save()
-      ctx.globalCompositeOperation = 'lighter'
-      ctx.fillStyle = blink ? 'rgba(255,60,90,0.55)' : 'rgba(60,160,255,0.55)'
-      ctx.fillRect(p[0] - 2, p[1] - 2, 1, 1)
-      ctx.fillRect(p[0] + 1, p[1] - 2, 1, 1)
       ctx.restore()
     }
     ctx.restore()

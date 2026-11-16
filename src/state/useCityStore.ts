@@ -18,10 +18,21 @@ import { ambient } from '../audio/ambient'
 import { defaultBookmarks, GOALS, createNewsItem } from '../data/world'
 import { createEventForType } from '../data/events'
 import { WORLD_SIZE } from '../data/city'
+import {
+  CASCADE_RULES,
+  createCascadeEvent,
+  createEconomy,
+  daylightForHour,
+  stepEconomy,
+  type EconomyState,
+} from '../sim/economy'
 
 export type PanelId = 'map' | 'sectors' | 'transit' | 'systems' | 'messages' | 'profile' | 'settings' | null
 
 const STORAGE_KEY = 'nexus-city-progress-v1'
+
+/** `eventId:targetType` keys that already produced a cascade follow-up. */
+const firedCascades = new Set<string>()
 
 interface PersistedProgress {
   discovered: string[]
@@ -33,6 +44,7 @@ interface PersistedProgress {
   factionRep: Record<FactionId, number>
   codexFound: string[]
   goalsDone: string[]
+  workerLayers: boolean
 }
 
 function readProgress(): Partial<PersistedProgress> {
@@ -65,6 +77,7 @@ function persistSoon() {
         factionRep: state.factionRep,
         codexFound: state.codexFound,
         goalsDone: state.goalsDone,
+        workerLayers: state.workerLayers,
       }
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
     } catch {
@@ -166,6 +179,10 @@ interface CityStore {
   setPlayer: (p: Partial<PlayerState>) => void
   playerMoveTo: (x: number, y: number) => void
   playerStop: () => void
+  playerFollow: boolean
+  setPlayerFollow: (on: boolean) => void
+  togglePlayerFollow: () => void
+  locatePlayer: () => void
   togglePlayerMode: () => void
   moveKeys: MoveKeys
   setMoveKey: (key: keyof MoveKeys, on: boolean) => void
@@ -195,6 +212,8 @@ interface CityStore {
 
   quality: QualityLevel
   setQuality: (quality: QualityLevel) => void
+  workerLayers: boolean
+  setWorkerLayers: (on: boolean) => void
 
   bookmarks: Bookmark[]
   addBookmark: (bookmark: Omit<Bookmark, 'id'>) => void
@@ -222,7 +241,9 @@ interface CityStore {
   setOverlay: (overlay: OverlayMode) => void
 
   facilityOpen: boolean
-  openFacility: () => void
+  /** True when the facility was entered on foot (avatar adjacent to the lot). */
+  facilityWalkIn: boolean
+  openFacility: (onFoot?: boolean) => void
   closeFacility: () => void
 
   searchOpen: boolean
@@ -264,6 +285,11 @@ interface CityStore {
   goalsDone: string[]
   checkGoals: () => void
   festivalsThrown: number
+
+  economy: EconomyState
+  /** Advance the district economy and fire any due cascade chains. */
+  tickEconomy: (dt?: number) => void
+  runCascades: () => void
 
   dispatchEvent: (event: CityEvent) => void
   triggerEvent: (type: CityEvent['type'], district?: DistrictId) => CityEvent
@@ -389,6 +415,18 @@ export const useCityStore = create<CityStore>()((set, get) => ({
       },
     })),
   playerStop: () => set((s) => ({ player: { ...s.player, moving: false, target: null, path: [] } })),
+  playerFollow: false,
+  setPlayerFollow: (on) => {
+    set({ playerFollow: on })
+    get().engine?.setPlayerFollow(on)
+  },
+  togglePlayerFollow: () => get().setPlayerFollow(!get().playerFollow),
+  locatePlayer: () => {
+    const state = get()
+    if (state.facilityOpen) state.closeFacility()
+    if (state.player.mode !== 'citizen') set({ player: { ...state.player, mode: 'citizen' } })
+    get().setPlayerFollow(true)
+  },
   moveKeys: { up: false, down: false, left: false, right: false, sprint: false },
   setMoveKey: (key, on) => set((s) => (s.moveKeys[key] === on ? s : { moveKeys: { ...s.moveKeys, [key]: on } })),
   clearMoveKeys: () => set({ moveKeys: { up: false, down: false, left: false, right: false, sprint: false } }),
@@ -453,6 +491,18 @@ export const useCityStore = create<CityStore>()((set, get) => ({
     })
   },
 
+  workerLayers: savedProgress.workerLayers ?? true,
+  setWorkerLayers: (on) => {
+    set({ workerLayers: on })
+    get().engine?.setWorkerLayers(on)
+    persistSoon()
+    get().pushToast({
+      title: 'LAYER RENDERER',
+      message: on ? 'Static layers now build on the OffscreenCanvas worker.' : 'Static layers render on the main thread.',
+      severity: 'info',
+    })
+  },
+
   quality: (savedProgress.quality as QualityLevel) || 'auto',
   setQuality: (quality) => {
     set({ quality })
@@ -511,7 +561,9 @@ export const useCityStore = create<CityStore>()((set, get) => ({
   },
 
   facilityOpen: false,
-  openFacility: () => set({ facilityOpen: true, activePanel: null }),
+  facilityWalkIn: false,
+  openFacility: (onFoot = false) =>
+    set({ facilityOpen: true, facilityWalkIn: onFoot, activePanel: null, searchOpen: false }),
   closeFacility: () => set({ facilityOpen: false }),
 
   searchOpen: false,
@@ -641,6 +693,40 @@ export const useCityStore = create<CityStore>()((set, get) => ({
   setClock: (clock) => set({ clock }),
   fps: 60,
   setFps: (fps) => set({ fps }),
+
+  economy: createEconomy(),
+  tickEconomy: (dt = 3) => {
+    const s = get()
+    const hour = Number(s.clock.slice(0, 2))
+    const next = stepEconomy(s.economy, {
+      dt,
+      hour: Number.isFinite(hour) ? hour : 12,
+      events: s.events,
+      daylight: daylightForHour(Number.isFinite(hour) ? hour : 12),
+    })
+    set({ economy: next })
+    s.runCascades()
+  },
+  runCascades: () => {
+    const s = get()
+    const now = Date.now()
+    for (const rule of CASCADE_RULES) {
+      for (const source of s.events) {
+        if (source.type !== rule.from) continue
+        if (now - source.startedAt < rule.delay * 1000) continue
+        const key = `${source.id}:${rule.to}`
+        if (firedCascades.has(key)) continue
+        // Never stack two events of the same type — the chain waits instead.
+        // Read fresh state: earlier rules in this pass may have dispatched one.
+        if (get().events.some((e) => e.type === rule.to)) continue
+        if (firedCascades.size > 400) firedCascades.clear()
+        firedCascades.add(key)
+        const event = createCascadeEvent(rule, source)
+        s.dispatchEvent(event)
+        window.setTimeout(() => get().removeEvent(event.id), event.duration)
+      }
+    }
+  },
 
   goalsDone: savedProgress.goalsDone ?? [],
   festivalsThrown: 0,

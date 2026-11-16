@@ -8,6 +8,8 @@ export function PlayerHud() {
   const y = useCityStore((s) => Math.round(s.player.y))
   const moving = useCityStore((s) => s.player.moving)
   const mode = useCityStore((s) => s.player.mode)
+  const follow = useCityStore((s) => s.playerFollow)
+  const locatePlayer = useCityStore((s) => s.locatePlayer)
   const togglePlayerMode = useCityStore((s) => s.togglePlayerMode)
   const playerStop = useCityStore((s) => s.playerStop)
   const profile = useSocialStore((s) => s.profile)
@@ -24,9 +26,19 @@ export function PlayerHud() {
       </div>
       <div className="player-hud__info">
         <div className="player-hud__coords">{x} × {y}</div>
-        <div className="player-hud__mode">{mode.toUpperCase()}</div>
+        <div className={`player-hud__mode ${follow ? 'player-hud__mode--locked' : ''}`}>
+          {follow ? 'CAM LOCK' : mode.toUpperCase()}
+        </div>
       </div>
       <div className="player-hud__actions">
+        <button
+          className={`mini-btn ${follow ? 'mini-btn--active' : ''}`}
+          onClick={locatePlayer}
+          title="Locate my citizen and lock the camera [L]"
+          aria-pressed={follow}
+        >
+          <Icon name="locate" size={12} /> LOCATE
+        </button>
         <button className="mini-btn" onClick={togglePlayerMode} title="Toggle mode (C)">MODE</button>
         <button className="mini-btn" onClick={playerStop} title="Stop movement" disabled={!moving}>STOP</button>
       </div>

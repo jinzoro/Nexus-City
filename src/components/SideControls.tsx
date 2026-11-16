@@ -9,6 +9,8 @@ export function SideControls() {
   const overlay = useCityStore((s) => s.overlay)
   const setOverlay = useCityStore((s) => s.setOverlay)
   const setSearchOpen = useCityStore((s) => s.setSearchOpen)
+  const playerFollow = useCityStore((s) => s.playerFollow)
+  const locatePlayer = useCityStore((s) => s.locatePlayer)
   const photoMode = useCityStore((s) => s.photoMode)
   const scanMode = useCityStore((s) => s.scanMode)
   const togglePhotoMode = useCityStore((s) => s.togglePhotoMode)
@@ -34,6 +36,15 @@ export function SideControls() {
       <div className="side-controls__group">
         <button className="side-btn" onClick={() => engine?.resetView()} title="Reset view [0]" aria-label="Reset view">
           <Icon name="reset" size={16} />
+        </button>
+        <button
+          className={`side-btn ${playerFollow ? 'side-btn--active' : ''}`}
+          onClick={locatePlayer}
+          title="Locate my citizen and lock the camera [L]"
+          aria-label="Locate my citizen and lock the camera"
+          aria-pressed={playerFollow}
+        >
+          <Icon name="locate" size={16} />
         </button>
         <button className="side-btn" onClick={() => engine?.overview()} title="City overview [O]" aria-label="City overview">
           <Icon name="overview" size={16} />

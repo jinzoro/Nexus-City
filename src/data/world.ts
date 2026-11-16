@@ -337,6 +337,7 @@ const VEHICLE_LABELS: Record<Vehicle['type'], { label: string; detail: string }>
   truck: { label: 'CARGO HAULER', detail: 'Heavy freight. Manifest sealed by the Foundry Guild.' },
   bike: { label: 'SCOOTER', detail: 'Lane-splitter. Fast, cheap and statistically brave.' },
   van: { label: 'SERVICE VAN', detail: 'Maintenance crew. Carrying parts for a node you cannot see.' },
+  police: { label: 'CIVIC PATROL', detail: 'Rapid-response cruiser. Running a rolling scan of the block.' },
 }
 
 export function vehicleEntity(v: Vehicle): SelectedEntity {

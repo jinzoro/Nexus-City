@@ -16,6 +16,53 @@ import type {
 } from './types'
 
 const PENDING_HANDLE_KEY = 'nexus.pendingHandle'
+const FRIENDS_KEY = 'nexus.friends'
+const DM_SEEN_KEY = 'nexus.dmSeen'
+const AUTO_LOCK_KEY = 'nexus.autoLock'
+
+function readJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = window.localStorage.getItem(key)
+    if (!raw) return fallback
+    const parsed = JSON.parse(raw) as T
+    return parsed && typeof parsed === 'object' ? parsed : fallback
+  } catch {
+    return fallback
+  }
+}
+
+function writeJson(key: string, value: unknown) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+/** readJson only accepts objects; numeric prefs need their own reader. */
+function readNumber(key: string, fallback: number) {
+  try {
+    const raw = window.localStorage.getItem(key)
+    if (!raw) return fallback
+    const parsed = Number(JSON.parse(raw))
+    return Number.isFinite(parsed) ? parsed : fallback
+  } catch {
+    return fallback
+  }
+}
+
+/** Tell every other tab this session was torn down. */
+let sessionChannel: BroadcastChannel | null = null
+function signalSignOut() {
+  try {
+    if ('BroadcastChannel' in window) {
+      sessionChannel ??= new BroadcastChannel('nexus.session')
+      sessionChannel.postMessage({ type: 'signed-out' })
+    }
+  } catch {
+    /* BroadcastChannel unavailable */
+  }
+}
 
 export const BODY_SWATCHES = [
   '#22e6ff',
@@ -59,12 +106,43 @@ interface SocialState {
   accountNotice: AccountNotice | null
   accountBusy: boolean
 
+  /** True when the visitor arrived through a password-recovery link. */
+  recovery: boolean
+  resetBusy: boolean
+  resetSent: boolean
+  resetNotice: AccountNotice | null
+
   channelBuildingId: string | null
   channelBuildingName: string | null
   channelMessages: BuildingChannelMessage[]
 
   dmWith: { userId: string; handle: string } | null
   dmThread: DirectThreadMessage[]
+  /** Unread direct messages per counterpart userId. */
+  dmUnread: Record<string, number>
+  /** Live "…is typing" signal for the open thread. */
+  dmTyping: { userId: string; handle: string; until: number } | null
+
+  /** Minutes of inactivity before the session locks; 0 disables auto-lock. */
+  sessionAutoLock: number
+  /** True while the resume overlay covers a signed-in session. */
+  sessionLocked: boolean
+  /** Epoch ms when the current session began. */
+  sessionSince: number | null
+  /** Epoch ms of the last pointer/key activity. */
+  lastActiveAt: number
+  setSessionAutoLock: (minutes: number) => void
+  noteActivity: () => void
+  lockSession: () => void
+  unlockSession: (password: string) => Promise<void>
+
+  /** Locally kept citizen watchlist: userId -> handle. */
+  friends: Record<string, string>
+  toggleFriend: (userId: string, handle: string) => void
+  isFriend: (userId: string) => boolean
+  refreshUnread: () => Promise<void>
+  markThreadRead: (userId: string) => void
+  sendTyping: () => void
 
   init: () => Promise<void>
   clearAuthError: () => void
@@ -75,6 +153,10 @@ interface SocialState {
   signOutEverywhere: () => Promise<void>
   resendConfirmation: () => Promise<void>
   cancelSignup: () => void
+  sendPasswordReset: (email: string) => Promise<void>
+  completePasswordReset: (password: string) => Promise<void>
+  cancelRecovery: () => void
+  clearResetNotice: () => void
   saveIdentity: (
     patch: Partial<
       Pick<
@@ -127,6 +209,7 @@ let buildingCh: RealtimeChannel | null = null
 let dmCh: RealtimeChannel | null = null
 let presenceKey = `nx-${Math.random().toString(36).slice(2, 10)}`
 let cachedSessionUserId: string | null = null
+let lastTypingSent = 0
 
 function mePresenceMeta(get: () => SocialState) {
   const p = get().profile
@@ -174,6 +257,8 @@ function resetSessionState(set: (patch: Partial<SocialState>) => void) {
     channelBuildingName: null,
     dmWith: null,
     dmThread: [],
+    dmUnread: {},
+    dmTyping: null,
     accountBusy: false,
     status: 'anonymous',
   })
@@ -224,12 +309,101 @@ export const useSocialStore = create<SocialState>()((set, get) => ({
   accountNotice: null,
   accountBusy: false,
 
+  recovery: false,
+  resetBusy: false,
+  resetSent: false,
+  resetNotice: null,
+
   channelBuildingId: null,
   channelBuildingName: null,
   channelMessages: [],
 
   dmWith: null,
   dmThread: [],
+  dmUnread: {},
+  dmTyping: null,
+
+  sessionAutoLock: readNumber(AUTO_LOCK_KEY, 30),
+  sessionLocked: false,
+  sessionSince: null,
+  lastActiveAt: Date.now(),
+  setSessionAutoLock: (minutes) => {
+    const value = Number.isFinite(minutes) ? Math.min(240, Math.max(0, Math.round(minutes))) : 30
+    set({ sessionAutoLock: value })
+    writeJson(AUTO_LOCK_KEY, value)
+  },
+  noteActivity: () => set({ lastActiveAt: Date.now() }),
+  lockSession: () => set({ sessionLocked: true }),
+  unlockSession: async (password) => {
+    if (!socialEnabled) return
+    const client = await supabase()
+    const { data } = await client.auth.getUser()
+    const email = data.user?.email
+    if (!email) {
+      // No recoverable identity (guest/offline) — just drop the veil.
+      set({ sessionLocked: false, lastActiveAt: Date.now() })
+      return
+    }
+    const { error } = await client.auth.signInWithPassword({ email, password })
+    if (error) {
+      set({ authError: error.message.toUpperCase() })
+      return
+    }
+    set({ sessionLocked: false, lastActiveAt: Date.now(), authError: null, sessionSince: Date.now() })
+  },
+
+  friends: readJson<Record<string, string>>(FRIENDS_KEY, {}),
+  toggleFriend: (userId, handle) => {
+    const friends = { ...get().friends }
+    if (friends[userId]) delete friends[userId]
+    else friends[userId] = handle
+    set({ friends })
+    writeJson(FRIENDS_KEY, friends)
+  },
+  isFriend: (userId) => Boolean(get().friends[userId]),
+
+  refreshUnread: async () => {
+    const { profile, status } = get()
+    if (!socialEnabled || status !== 'online' || !profile) return
+    const client = await supabase()
+    const { data } = await client
+      .from('direct_messages')
+      .select('sender_id, recipient_id, created_at')
+      .or(`sender_id.eq.${profile.id},recipient_id.eq.${profile.id}`)
+      .order('created_at', { ascending: false })
+      .limit(200)
+    if (!data) return
+    const seen = readJson<Record<string, number>>(DM_SEEN_KEY, {})
+    const counts: Record<string, number> = {}
+    for (const row of data) {
+      const sender = row.sender_id as string
+      const recipient = row.recipient_id as string
+      if (sender === profile.id || recipient !== profile.id) continue
+      const at = Date.parse(row.created_at as string)
+      if (at <= (seen[sender] ?? 0)) continue
+      counts[sender] = (counts[sender] ?? 0) + 1
+    }
+    set({ dmUnread: counts })
+  },
+
+  markThreadRead: (userId) => {
+    const seen = readJson<Record<string, number>>(DM_SEEN_KEY, {})
+    seen[userId] = Date.now()
+    writeJson(DM_SEEN_KEY, seen)
+    set((s) => ({ dmUnread: { ...s.dmUnread, [userId]: 0 } }))
+  },
+
+  sendTyping: () => {
+    const { profile, dmWith, status } = get()
+    if (!dmCh || !profile || !dmWith || status !== 'online') return
+    if (Date.now() - lastTypingSent < 1600) return
+    lastTypingSent = Date.now()
+    void dmCh.send({
+      type: 'broadcast',
+      event: 'typing',
+      payload: { userId: profile.id, handle: profile.handle, at: Date.now() },
+    })
+  },
 
   /* ---------------------------------------------------------------- */
 
@@ -241,6 +415,9 @@ export const useSocialStore = create<SocialState>()((set, get) => ({
     // Expired / invalid email-confirmation links land back here with the error
     // in the URL hash. Read it before supabase-js consumes the hash.
     const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+    // A recovery link carries `type=recovery` in the fragment; supabase-js then
+    // exchanges it for a session. Flag it so the app can ask for a new code.
+    if (hash.get('type') === 'recovery') set({ recovery: true })
     const hashError = hash.get('error_description') ?? hash.get('error')
     if (hashError) {
       const code = hash.get('error_code') ?? ''
@@ -277,9 +454,12 @@ export const useSocialStore = create<SocialState>()((set, get) => ({
             channelBuildingName: null,
             dmWith: null,
             dmThread: [],
+            dmUnread: {},
+            dmTyping: null,
             status: 'anonymous',
           })
         }
+        if (event === 'PASSWORD_RECOVERY') set({ recovery: true })
         if (event === 'SIGNED_IN' && session?.user) {
           cachedSessionUserId = session.user.id
           void get().init()
@@ -344,7 +524,13 @@ export const useSocialStore = create<SocialState>()((set, get) => ({
       }
     }
 
-    set({ profile, status: profile ? 'online' : 'anonymous' })
+    set({
+      profile,
+      status: profile ? 'online' : 'anonymous',
+      sessionSince: profile ? get().sessionSince ?? Date.now() : null,
+      lastActiveAt: Date.now(),
+      sessionLocked: false,
+    })
     if (!profile) return
 
     // city presence: one global channel; facilities filter it locally
@@ -356,6 +542,7 @@ export const useSocialStore = create<SocialState>()((set, get) => ({
       if (s === 'SUBSCRIBED') pushPresence(get, set)
     })
     set({ status: 'online' })
+    void get().refreshUnread()
   },
 
   clearAuthError: () => set({ authError: null }),
@@ -383,6 +570,64 @@ export const useSocialStore = create<SocialState>()((set, get) => ({
   cancelSignup: () => {
     set({ signupPending: null })
   },
+
+  sendPasswordReset: async (email) => {
+    if (!socialEnabled) return
+    const clean = email.trim()
+    if (!clean.includes('@')) {
+      set({ resetNotice: { tone: 'error', text: 'ENTER THE EMAIL ON YOUR CITIZEN RECORD' } })
+      return
+    }
+    set({ resetBusy: true, resetNotice: null, authError: null })
+    try {
+      const client = await supabase()
+      const { error } = await client.auth.resetPasswordForEmail(clean, {
+        redirectTo: `${window.location.origin}/`,
+      })
+      if (error) {
+        set({ resetBusy: false, resetNotice: { tone: 'error', text: error.message.toUpperCase() } })
+        return
+      }
+      set({
+        resetBusy: false,
+        resetSent: true,
+        resetNotice: { tone: 'ok', text: 'RESET LINK SENT // CHECK YOUR INBOX (AND SPAM)' },
+      })
+    } catch (e: unknown) {
+      set({ resetBusy: false, resetNotice: { tone: 'error', text: (e as Error).message.toUpperCase() } })
+    }
+  },
+
+  completePasswordReset: async (password) => {
+    if (!socialEnabled) return
+    if (password.length < 6) {
+      set({ resetNotice: { tone: 'error', text: 'NEW ACCESS CODE NEEDS 6+ CHARACTERS' } })
+      return
+    }
+    set({ resetBusy: true, resetNotice: null })
+    try {
+      const client = await supabase()
+      const { error } = await client.auth.updateUser({ password })
+      if (error) {
+        set({ resetBusy: false, resetNotice: { tone: 'error', text: error.message.toUpperCase() } })
+        return
+      }
+      set({
+        resetBusy: false,
+        recovery: false,
+        resetSent: false,
+        resetNotice: { tone: 'ok', text: 'ACCESS CODE UPDATED // SESSION RESTORED' },
+      })
+      booted = false
+      await get().init()
+    } catch (e: unknown) {
+      set({ resetBusy: false, resetNotice: { tone: 'error', text: (e as Error).message.toUpperCase() } })
+    }
+  },
+
+  cancelRecovery: () => set({ recovery: false, resetNotice: null, resetBusy: false }),
+
+  clearResetNotice: () => set({ resetNotice: null }),
 
   signUp: async (email, password, handle) => {
     if (!socialEnabled) return
@@ -462,8 +707,9 @@ export const useSocialStore = create<SocialState>()((set, get) => ({
     if (!socialEnabled) return
     const client = await supabase()
     await client.auth.signOut()
+    signalSignOut()
     resetSessionState(set)
-    set({ authError: null, accountNotice: null })
+    set({ authError: null, accountNotice: null, sessionLocked: false, sessionSince: null })
   },
 
   signOutEverywhere: async () => {
@@ -471,8 +717,9 @@ export const useSocialStore = create<SocialState>()((set, get) => ({
     set({ accountBusy: true })
     const client = await supabase()
     await client.auth.signOut({ scope: 'global' })
+    signalSignOut()
     resetSessionState(set)
-    set({ authError: null, accountNotice: null })
+    set({ authError: null, accountNotice: null, sessionLocked: false, sessionSince: null })
   },
 
   saveIdentity: async (patch) => {
@@ -680,14 +927,23 @@ export const useSocialStore = create<SocialState>()((set, get) => ({
     closeDirectChannel()
     // sorted pair key so both sides land on the same channel
     const pair = [profile.id, userId].sort().join(':')
-    set({ dmWith: { userId, handle }, dmThread: [] })
+    set({ dmWith: { userId, handle }, dmThread: [], dmTyping: null })
+    get().markThreadRead(userId)
 
     const client = await supabase()
     dmCh = client.channel(`dm:${pair}`)
     dmCh.on('broadcast', { event: 'dm' }, ({ payload }) => {
       const m = payload as DirectThreadMessage & { cid?: string }
       if (m.cid === presenceKey) return
-      set((s) => ({ dmThread: [...s.dmThread, m as DirectThreadMessage].slice(-80) }))
+      set((s) => ({
+        dmThread: [...s.dmThread, m as DirectThreadMessage].slice(-80),
+        dmTyping: s.dmTyping?.userId === m.userId ? null : s.dmTyping,
+      }))
+    })
+    dmCh.on('broadcast', { event: 'typing' }, ({ payload }) => {
+      const m = payload as { userId?: string; handle?: string }
+      if (!m.userId || m.userId === profile.id) return
+      set({ dmTyping: { userId: m.userId, handle: m.handle ?? handle, until: Date.now() + 2600 } })
     })
     dmCh.subscribe(async (s) => {
       if (s !== 'SUBSCRIBED') return
@@ -719,8 +975,10 @@ export const useSocialStore = create<SocialState>()((set, get) => ({
   },
 
   closeDirect: () => {
+    const userId = get().dmWith?.userId
     closeDirectChannel()
-    set({ dmWith: null, dmThread: [] })
+    set({ dmWith: null, dmThread: [], dmTyping: null })
+    if (userId) get().markThreadRead(userId)
   },
 
   sendDirect: async (content) => {

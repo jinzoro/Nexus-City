@@ -6,7 +6,10 @@ import { createRandomEvent } from './data/events'
 import { ambient } from './audio/ambient'
 import { useCityStore } from './state/useCityStore'
 import { useSocialStore } from './social/useSocialStore'
-import { AccountGate } from './components/AccountGate'
+import { Landing } from './components/Landing'
+import { PasswordReset } from './components/PasswordReset'
+import { SessionLock } from './components/SessionLock'
+import { attachSessionManager } from './social/session'
 import { PlayerHud } from './components/PlayerHud'
 import { TopBar } from './components/TopBar'
 import { BottomNav } from './components/BottomNav'
@@ -64,6 +67,8 @@ function phaseLabel(daylight: number) {
 
 export default function App() {
   const [city, setCity] = useState<CityData | null>(null)
+  const [guestMode, setGuestMode] = useState(false)
+  const [landingLeaving, setLandingLeaving] = useState(false)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const introDone = useCityStore((s) => s.introDone)
   const finishIntro = useCityStore((s) => s.finishIntro)
@@ -79,6 +84,7 @@ export default function App() {
   const weather = useCityStore((s) => s.weather)
   const clock = useCityStore((s) => s.clock)
   const quality = useCityStore((s) => s.quality)
+  const workerLayers = useCityStore((s) => s.workerLayers)
   const onboardingDone = useCityStore((s) => s.onboardingDone)
 
   const socialEnabled = useSocialStore((s) => s.enabled)
@@ -106,24 +112,40 @@ export default function App() {
     useSocialStore.getState().init()
   }, [social.enabled])
 
+  // Session manager: idle auto-lock, token refresh, cross-tab sign-out.
+  useEffect(() => attachSessionManager(), [])
+
   useEffect(() => {
     if (city) useCityStore.getState().setCity(city)
   }, [city])
 
-  // Engine lifecycle — only after auth
+  const signedIn =
+    guestMode || (social.enabled && social.status === 'online' && Boolean(social.profile))
+
+  // Compile the cavern once, up front: the landing page uses the same city as
+  // a live backdrop, and the engine reuses it after sign-in.
   useEffect(() => {
-    if (!social.enabled || social.status !== 'online' || !social.profile) {
-      setCity(null)
-      return
-    }
-    const handle = window.setTimeout(() => setCity(generateCity(CITY_SEED_DEFAULT)), 460)
+    if (city) return
+    const handle = window.setTimeout(() => setCity(generateCity(CITY_SEED_DEFAULT)), 200)
     return () => window.clearTimeout(handle)
-  }, [social.enabled, social.status, social.profile])
+  }, [city])
+
+  // Crossfade the landing into the boot sequence on a successful sign-in.
+  const wasSignedIn = useRef(signedIn)
+  useEffect(() => {
+    if (signedIn && !wasSignedIn.current) {
+      wasSignedIn.current = true
+      setLandingLeaving(true)
+      const timer = window.setTimeout(() => setLandingLeaving(false), 540)
+      return () => window.clearTimeout(timer)
+    }
+    if (!signedIn) wasSignedIn.current = false
+  }, [signedIn])
 
   // Engine lifecycle
   useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas || !city) return
+    if (!canvas || !city || !signedIn) return
     const engine = new CityEngine(canvas, city, {
       onHover: (building, x, y) => useCityStore.getState().setHover(building, x, y),
       onSelect: (building) => useCityStore.getState().setSelected(building),
@@ -133,6 +155,7 @@ export default function App() {
         else state.clearEntity()
       },
       onFollowChange: (following) => useCityStore.getState().setFollowingEntity(following),
+      onPlayerFollowChange: (following) => useCityStore.setState({ playerFollow: following }),
       onCamera: (info) => {
         const state = useCityStore.getState()
         state.setCamera(info)
@@ -148,6 +171,7 @@ export default function App() {
     })
     useCityStore.getState().setEngine(engine)
     engine.setQuality(useCityStore.getState().quality)
+    engine.setWorkerLayers(useCityStore.getState().workerLayers)
     engine.setPhotoMode(useCityStore.getState().photoMode)
     engine.setScanMode(useCityStore.getState().scanMode)
 
@@ -168,6 +192,8 @@ export default function App() {
     } else if (deep.get('view') === 'overview') {
       engine.overview()
     }
+    // A shared deep link should land directly on the framing it describes.
+    if (nodeId || bookmarkCell || deep.get('view')) useCityStore.getState().finishIntro()
 
     const observer = new ResizeObserver(() => engine.resize())
     observer.observe(canvas)
@@ -180,7 +206,7 @@ export default function App() {
       engine.destroy()
       useCityStore.getState().setEngine(null)
     }
-  }, [city])
+  }, [city, signedIn])
 
   // Keep engine render modes in sync with UI state.
   useEffect(() => {
@@ -194,6 +220,10 @@ export default function App() {
   useEffect(() => {
     useCityStore.getState().engine?.setQuality(quality)
   }, [quality])
+
+  useEffect(() => {
+    useCityStore.getState().engine?.setWorkerLayers(workerLayers)
+  }, [workerLayers])
 
   // Deep links: the hash always points at the current node, or the camera cell in photo mode.
   useEffect(() => {
@@ -252,19 +282,28 @@ export default function App() {
     if (audioEnabled) ambient.setDistrict(camera.district)
   }, [camera.district, audioEnabled])
 
-  // Living city stats
+  // Economy simulation: district income, power demand/supply and cascade chains.
+  useEffect(() => {
+    if (!introDone) return
+    const tick = () => useCityStore.getState().tickEconomy(3)
+    tick()
+    const timer = window.setInterval(tick, 3000)
+    return () => window.clearInterval(timer)
+  }, [introDone])
+
+  // Living city stats — power/stability/traffic now read from the economy.
   useEffect(() => {
     const timer = window.setInterval(() => {
       const state = useCityStore.getState()
-      const powerEvent = state.events.some((e) => e.type === 'power')
+      const econ = state.economy
       const networkEvent = state.events.some((e) => e.type === 'network')
       const transitEvent = state.events.some((e) => e.type === 'transit')
-      const festival = state.events.some((e) => e.type === 'festival')
+      const coverage = (econ.supply / Math.max(1, econ.demand)) * 100
       state.setStats({
-        power: clamp(state.stats.power + (powerEvent ? -2.4 : 0.9) + (Math.random() - 0.5) * 1.6, 46, 99.6),
+        power: clamp(coverage + (Math.random() - 0.5) * 0.9, 18, 99.6),
         network: clamp(state.stats.network + (networkEvent ? -3.1 : 0.7) + (Math.random() - 0.5) * 1.9, 42, 99.8),
-        stability: clamp(state.stats.stability + (powerEvent || networkEvent ? -1.6 : 0.6) + (Math.random() - 0.5) * 1.1, 48, 99.4),
-        traffic: clamp(state.stats.traffic + (festival ? 2.2 : 0.4) + (Math.random() - 0.5) * 3.4, 24, 99),
+        stability: clamp(econ.stability + (Math.random() - 0.5) * 0.7, 18, 99.4),
+        traffic: clamp(econ.traffic + (Math.random() - 0.5) * 2.4, 18, 99),
         transit: clamp(state.stats.transit + (transitEvent ? -2.8 : 0.5) + (Math.random() - 0.5) * 2.2, 30, 99),
         air: clamp(state.stats.air + (Math.random() - 0.5) * 1.8, 38, 92),
         temperature: clamp(18.6 + Math.sin(Date.now() / 240000) * 1.8 + (Math.random() - 0.5) * 0.4, 16, 24),
@@ -378,6 +417,7 @@ export default function App() {
         return
       }
       if (key === 'o') state.engine?.overview()
+      if (key === 'l') { state.clearMoveKeys(); state.locatePlayer() }
       if (key === 'c') { state.clearMoveKeys(); state.togglePlayerMode() }
       if (key === 'f') { state.clearMoveKeys(); state.togglePhotoMode() }
       if (key === 'v') state.toggleScanMode()
@@ -420,25 +460,7 @@ export default function App() {
 
   return (
     <>
-      {!social.enabled || social.status !== 'online' || !social.profile ? (
-        <div className="login-gate" data-login>
-          <div className="login-gate__card">
-            <div className="login-gate__head">
-              <span className="login-gate__badge">NEXUS</span>
-              <h1>CITIZEN ACCESS</h1>
-            </div>
-            <p className="login-gate__tag">AUTHENTICATION REQUIRED TO ENTER THE CITY</p>
-            {!social.enabled ? (
-              <p className="login-gate__offline">
-                SOCIAL MESH OFFLINE — set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY to
-                enable sign-in.
-              </p>
-            ) : null}
-            <AccountGate social={social} error={social.authError} disabled={!social.enabled} />
-            <div className="login-gate__foot">NEXUS // UNDERGROUND MEGAPOLIS</div>
-          </div>
-        </div>
-      ) : (
+      {signedIn ? (
         <div
           className={`app ${selectedId ? 'app--selection' : ''} ${
             selectedEntity ? 'app--entity' : ''
@@ -506,7 +528,19 @@ export default function App() {
           <MobileHint />
           {!introDone ? <Intro city={city} onEnter={finishIntro} /> : null}
         </div>
-      )}
+      ) : null}
+      {!signedIn || landingLeaving ? (
+        <Landing
+          city={city}
+          social={social}
+          error={social.authError}
+          disabled={!social.enabled}
+          leaving={landingLeaving}
+          onGuest={() => setGuestMode(true)}
+        />
+      ) : null}
+      <PasswordReset />
+      <SessionLock />
     </>
   )
 }

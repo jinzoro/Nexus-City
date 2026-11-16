@@ -7,8 +7,13 @@ export function SecurityCard() {
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
   const [confirm, setConfirm] = useState('')
+  const autoLock = useSocialStore((s) => s.sessionAutoLock)
+  const setAutoLock = useSocialStore((s) => s.setSessionAutoLock)
+  const lockSession = useSocialStore((s) => s.lockSession)
+  const sessionSince = useSocialStore((s) => s.sessionSince)
 
   const canAct = status === 'online' && profile
+  const sessionMinutes = sessionSince ? Math.max(1, Math.round((Date.now() - sessionSince) / 60000)) : 0
 
   return (
     <div className="settings-card">
@@ -28,6 +33,32 @@ export function SecurityCard() {
         <input type="password" placeholder="NEW CODE (6+)" value={next} onChange={e => setNext(e.target.value)} disabled={!canAct || accountBusy} />
         <input type="password" placeholder="CONFIRM NEW CODE" value={confirm} onChange={e => setConfirm(e.target.value)} disabled={!canAct || accountBusy} />
         <button className="mini-btn" onClick={() => { if (next.length >= 6 && next === confirm) updatePassword(current, next) }} disabled={!canAct || accountBusy || next.length < 6 || next !== confirm}>UPDATE PASSWORD</button>
+      </div>
+
+      <div className="settings-field">
+        <label>SESSION</label>
+        <div className="settings-row">
+          <select
+            className="settings-select"
+            value={autoLock}
+            onChange={(event) => setAutoLock(Number(event.target.value))}
+            disabled={!canAct}
+            aria-label="Auto-lock after inactivity"
+          >
+            <option value={0}>AUTO-LOCK OFF</option>
+            <option value={5}>LOCK AFTER 5 MIN</option>
+            <option value={15}>LOCK AFTER 15 MIN</option>
+            <option value={30}>LOCK AFTER 30 MIN</option>
+            <option value={60}>LOCK AFTER 60 MIN</option>
+          </select>
+          <button className="mini-btn" onClick={lockSession} disabled={!canAct}>
+            LOCK NOW
+          </button>
+        </div>
+        <p className="settings-note">
+          {sessionMinutes ? `This session has been open for ${sessionMinutes} min. ` : ''}
+          Locking hides the city until your access code is re-entered. Signing out in one tab signs out the others.
+        </p>
       </div>
 
       <div className="settings-field">

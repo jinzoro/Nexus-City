@@ -8,13 +8,17 @@ import { useSocialStore } from '../social/useSocialStore'
 import {
   buildFloorPlan,
   drawFloorPlan,
+  planWalkable,
   spawnNpcs,
+  spawnPlayer,
   stepNpcs,
   PLAN_CELL,
   PLAN_OX,
   PLAN_OY,
   type Npc,
+  type PlanPlayer,
 } from '../engine/interior'
+import { dialogueFor, type DialogueReply, type DialogueTree } from '../data/dialogue'
 import { formatNumber, Meter, SectionLabel, StatusBadge, statusColor } from './ui'
 import { Icon } from './Icons'
 import { FacilityChannel } from './FacilityChannel'
@@ -343,10 +347,15 @@ export function FacilityView() {
   const [logs, setLogs] = useState<string[]>([])
   const [floor, setFloor] = useState(0)
   const [view, setView] = useState<'plan' | 'section'>('plan')
-  const [npcInfo, setNpcInfo] = useState<Npc | null>(null)
+  const [walking, setWalking] = useState(false)
+  const [dialogue, setDialogue] = useState<{ npc: Npc; tree: DialogueTree; reply: string | null } | null>(null)
   const [signals, setSignals] = useState(0)
   const npcsRef = useRef<Npc[]>([])
+  const playerRef = useRef<PlanPlayer | null>(null)
+  const discoverCodex = useCityStore((s) => s.discoverCodex)
+  const adjustRep = useCityStore((s) => s.adjustRep)
   const presence = useSocialStore((s) => s.presence)
+  const myProfile = useSocialStore((s) => s.profile)
   const myId = useSocialStore((s) => s.profile?.id ?? null)
   const signOut = useSocialStore((s) => s.signOut)
   const building = getBuilding(selectedId)
@@ -366,6 +375,8 @@ export function FacilityView() {
     setSecurity(building.status !== 'RESTRICTED')
     setComms(true)
     setFloor(0)
+    setDialogue(null)
+    setWalking(useCityStore.getState().facilityWalkIn)
     setLogs([
       `> HANDSHAKE ACCEPTED // NODE ${building.id.slice(-6).toUpperCase()}`,
       `> ACCESS LEVEL 04 GRANTED TO CITIZEN NX-8841`,
@@ -379,10 +390,94 @@ export function FacilityView() {
     const plan = buildFloorPlan(building, floor)
     const npcs = spawnNpcs(plan, building, floor, totalFloors, new Date().getHours(), visitors)
     npcsRef.current = npcs
+    const spawn = spawnPlayer(plan)
+    playerRef.current = {
+      ...spawn,
+      facing: 'up',
+      body: myProfile?.body ?? '#22e6ff',
+      visor: myProfile?.visor ?? '#8ff8ff',
+      label: myProfile?.handle ?? 'CITIZEN',
+    }
     setSignals(npcs.filter((n) => !n.visitor).length)
-    setNpcInfo(null)
+    setDialogue(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, building, floor, view, totalFloors, visitorsKey])
+
+  // On-foot movement inside the plan: axis-separated collision against walls
+  // and furniture, plus soft avoidance around wandering occupants.
+  useEffect(() => {
+    if (!open || !building || !walking || view !== 'plan') return
+    const plan = buildFloorPlan(building, floor)
+    const keys = new Set<'up' | 'down' | 'left' | 'right'>()
+    const map: Record<string, 'up' | 'down' | 'left' | 'right'> = {
+      w: 'up',
+      arrowup: 'up',
+      s: 'down',
+      arrowdown: 'down',
+      a: 'left',
+      arrowleft: 'left',
+      d: 'right',
+      arrowright: 'right',
+    }
+    const onKey = (event: KeyboardEvent) => {
+      const dir = map[event.key.toLowerCase()]
+      if (!dir) return
+      event.preventDefault()
+      event.stopPropagation()
+      keys.add(dir)
+    }
+    const onKeyUp = (event: KeyboardEvent) => {
+      const dir = map[event.key.toLowerCase()]
+      if (dir) keys.delete(dir)
+    }
+    const onBlur = () => keys.clear()
+    let raf = 0
+    let last = performance.now()
+    const loop = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000)
+      last = now
+      const p = playerRef.current
+      if (p) {
+        const vx = (keys.has('right') ? 1 : 0) - (keys.has('left') ? 1 : 0)
+        const vy = (keys.has('down') ? 1 : 0) - (keys.has('up') ? 1 : 0)
+        if (vx !== 0 || vy !== 0) {
+          const len = Math.hypot(vx, vy)
+          const speed = 4.4
+          const blocked = (x: number, y: number) => {
+            if (!planWalkable(plan, x, y)) return true
+            for (const n of npcsRef.current) {
+              if (Math.hypot(n.x - x, n.y - y) < 0.62) return true
+            }
+            return false
+          }
+          const nx = p.x + (vx / len) * speed * dt
+          const ny = p.y + (vy / len) * speed * dt
+          if (!blocked(nx, p.y)) p.x = nx
+          if (!blocked(p.x, ny)) p.y = ny
+          p.facing = Math.abs(vx) > 0 || Math.abs(vy) > 0
+            ? Math.abs(vx) >= Math.abs(vy)
+              ? vx > 0
+                ? 'right'
+                : 'left'
+              : vy > 0
+                ? 'down'
+                : 'up'
+            : p.facing
+        }
+      }
+      raf = requestAnimationFrame(loop)
+    }
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onBlur)
+    raf = requestAnimationFrame(loop)
+    return () => {
+      cancelAnimationFrame(raf)
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onBlur)
+    }
+  }, [open, building, walking, view, floor])
 
   useEffect(() => {
     if (!open || !building) return
@@ -405,7 +500,15 @@ export function FacilityView() {
       ctx.setTransform(scale, 0, 0, scale, 0, 0)
       if (plan) {
         stepNpcs(npcsRef.current, plan, dt, building.seed + floor * 7)
-        drawFloorPlan(ctx, plan, building, npcsRef.current, { width, height, time: now / 1000, power, security, floor })
+        drawFloorPlan(ctx, plan, building, npcsRef.current, {
+          width,
+          height,
+          time: now / 1000,
+          power,
+          security,
+          floor,
+          player: walking ? playerRef.current : null,
+        })
       } else {
         drawScene(ctx, building, now / 1000, width, height, floor)
       }
@@ -413,7 +516,7 @@ export function FacilityView() {
     }
     raf = requestAnimationFrame(draw)
     return () => cancelAnimationFrame(raf)
-  }, [open, building, floor, view, power, security])
+  }, [open, building, floor, view, power, security, walking])
 
   if (!open || !building) return null
   const district = getDistrict(building.district)
@@ -439,7 +542,7 @@ export function FacilityView() {
     const gx = (cx - PLAN_OX) / PLAN_CELL
     const gy = (cy - PLAN_OY) / PLAN_CELL
     let best: Npc | null = null
-    let bestD = 1
+    let bestD = 1.2
     for (const n of npcsRef.current) {
       const d = Math.hypot(n.x - gx, n.y - gy)
       if (d < bestD) {
@@ -447,8 +550,24 @@ export function FacilityView() {
         best = n
       }
     }
-    setNpcInfo(best)
-    if (best) log(`SIGNAL LOCK // ${best.name} // ${best.role}`)
+    if (!best) return
+    const plan = buildFloorPlan(building, floor)
+    setDialogue({ npc: best, tree: dialogueFor(plan.archetype, best.role, building.name), reply: null })
+    log(`SIGNAL LOCK // ${best.name} // ${best.role}`)
+  }
+
+  const chooseReply = (reply: DialogueReply) => {
+    setDialogue((current) => (current ? { ...current, reply: reply.reply } : current))
+    log(`REPLY // ${reply.label}${reply.codexId ? ' // CODEX LOGGED' : ''}`)
+    if (reply.codexId) discoverCodex(reply.codexId)
+    if (reply.faction && reply.delta) {
+      adjustRep(reply.faction, reply.delta)
+      pushToast({
+        title: 'STANDING UPDATED',
+        message: `${reply.faction.toUpperCase()} +${reply.delta} — the conversation was logged.`,
+        severity: 'info',
+      })
+    }
   }
 
   const toggle = (kind: 'power' | 'security' | 'comms') => {
@@ -507,19 +626,49 @@ export function FacilityView() {
                 <button className={view === 'section' ? 'facility-view-toggle__on' : ''} onClick={() => setView('section')}>
                   SECTION
                 </button>
+                {view === 'plan' ? (
+                  <button
+                    className={walking ? 'facility-view-toggle__on' : ''}
+                    onClick={() => {
+                      setWalking((v) => {
+                        log(v ? 'AVATAR HALTED // READ-ONLY FEED' : 'AVATAR DEPLOYED // WASD TO WALK')
+                        return !v
+                      })
+                    }}
+                    title="Walk the floor plan with WASD"
+                  >
+                    ON FOOT
+                  </button>
+                ) : null}
               </div>
             </div>
-            {view === 'plan' && npcInfo ? (
-              <div className="facility-npc">
-                <div>
-                  <strong style={{ color: npcInfo.self ? '#63ff9b' : '#8ff8ff' }}>
-                    {npcInfo.name}{npcInfo.self ? ' (YOU)' : ''}
-                  </strong>
-                  <span>{npcInfo.role}{npcInfo.visitor ? ' // PRESENCE' : ' // OCCUPANT'}</span>
+            {view === 'plan' && dialogue ? (
+              <div className="facility-dialogue">
+                <div className="facility-dialogue__head">
+                  <div>
+                    <strong style={{ color: dialogue.npc.self ? '#63ff9b' : '#8ff8ff' }}>
+                      {dialogue.npc.name}{dialogue.npc.self ? ' (YOU)' : ''}
+                    </strong>
+                    <span>{dialogue.npc.role}{dialogue.npc.visitor ? ' // PRESENCE' : ' // OCCUPANT'}</span>
+                  </div>
+                  <button className="icon-btn icon-btn--small" onClick={() => setDialogue(null)} title="Dismiss signal">
+                    <Icon name="close" size={11} />
+                  </button>
                 </div>
-                <button className="icon-btn icon-btn--small" onClick={() => setNpcInfo(null)} title="Dismiss signal">
-                  <Icon name="close" size={11} />
-                </button>
+                <p className="facility-dialogue__said">{dialogue.reply ?? dialogue.tree.greet}</p>
+                <div className="facility-dialogue__choices">
+                  {dialogue.tree.replies.map((reply) => (
+                    <button
+                      key={reply.label}
+                      className="facility-dialogue__choice"
+                      onClick={() => chooseReply(reply)}
+                      title={reply.codexId ? 'Logs to the codex' : reply.faction ? 'Raises faction standing' : undefined}
+                    >
+                      {reply.label}
+                    </button>
+                  ))}
+                </div>
+                {walking ? <span className="facility-dialogue__hint">WASD TO WALK // CLICK AN OCCUPANT TO TALK</span> : null}
               </div>
             ) : null}
             <div className="facility-visual__legend">

@@ -201,7 +201,23 @@ export function SelectionPanel() {
         <div className="selection-panel__actions">
           <SectionLabel>NODE ACTIONS</SectionLabel>
           <div className="action-grid">
-            <button className="action-btn action-btn--primary" onClick={openFacility}>
+            <button
+              className="action-btn action-btn--primary"
+              onClick={() => {
+                const p = useCityStore.getState().player
+                const dx = Math.max(building.x - p.x, 0, p.x - (building.x + building.w))
+                const dy = Math.max(building.y - p.y, 0, p.y - (building.y + building.d))
+                const near = Math.hypot(dx, dy) <= 2.4
+                openFacility(near)
+                if (near) {
+                  pushToast({
+                    title: 'ENTERING ON FOOT',
+                    message: 'Walk the plan with WASD/arrows. Click an occupant to talk.',
+                    severity: 'info',
+                  })
+                }
+              }}
+            >
               <Icon name="enter" size={15} />
               <span>ENTER FACILITY</span>
             </button>

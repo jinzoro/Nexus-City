@@ -350,6 +350,42 @@ export function spawnNpcs(
   return npcs
 }
 
+/** True when a plan-space point is walkable floor (not wall / furniture). */
+export function planWalkable(plan: FloorPlan, x: number, y: number) {
+  const cx = Math.floor(x)
+  const cy = Math.floor(y)
+  if (cx < 0 || cy < 0 || cx >= PLAN_COLS || cy >= PLAN_ROWS) return false
+  return plan.cells[cy * PLAN_COLS + cx] === 1
+}
+
+/** Spawn point for the on-foot avatar: the south corridor, then the first floor. */
+export function spawnPlayer(plan: FloorPlan) {
+  const candidates: Array<[number, number]> = [
+    [14, 16],
+    [13, 15],
+    [14, 9],
+    [2, 9],
+  ]
+  for (const [x, y] of candidates) {
+    if (planWalkable(plan, x + 0.5, y + 0.5)) return { x: x + 0.5, y: y + 0.5 }
+  }
+  for (let y = PLAN_ROWS - 2; y > 0; y--) {
+    for (let x = 1; x < PLAN_COLS - 1; x++) {
+      if (planWalkable(plan, x + 0.5, y + 0.5)) return { x: x + 0.5, y: y + 0.5 }
+    }
+  }
+  return { x: PLAN_COLS / 2, y: PLAN_ROWS / 2 }
+}
+
+export interface PlanPlayer {
+  x: number
+  y: number
+  facing: 'left' | 'right' | 'up' | 'down'
+  body: string
+  visor: string
+  label: string
+}
+
 export function stepNpcs(npcs: Npc[], plan: FloorPlan, dt: number, rngSeed: number) {
   let t = rngSeed >>> 0
   const rnd = () => {
@@ -429,9 +465,17 @@ export function drawFloorPlan(
   plan: FloorPlan,
   building: Building,
   npcs: Npc[],
-  opts: { width: number; height: number; time: number; power: boolean; security: boolean; floor: number },
+  opts: {
+    width: number
+    height: number
+    time: number
+    power: boolean
+    security: boolean
+    floor: number
+    player?: PlanPlayer | null
+  },
 ) {
-  const { width, height, time, power, security, floor } = opts
+  const { width, height, time, power, security, floor, player } = opts
   const district = getDistrict(building.district)
   ctx.clearRect(0, 0, width, height)
   ctx.fillStyle = '#04060d'
@@ -555,6 +599,30 @@ export function drawFloorPlan(
       const tag = n.self ? `${n.name} (YOU)` : n.name
       ctx.fillText(tag, nx - tag.length * 2, ny - 8)
     }
+  }
+
+  // on-foot avatar
+  if (player) {
+    const ax = px(player.x)
+    const ay = py(player.y)
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'
+    ctx.fillRect(ax - 4, ay + 3, 9, 2)
+    ctx.fillStyle = player.body
+    ctx.fillRect(ax - 3, ay - 4, 7, 8)
+    ctx.fillStyle = player.visor
+    ctx.fillRect(ax - 2, ay - 6, 5, 3)
+    ctx.fillStyle = '#8ff8ff'
+    if (player.facing === 'up') ctx.fillRect(ax - 1, ay - 9, 3, 2)
+    if (player.facing === 'down') ctx.fillRect(ax - 1, ay + 5, 3, 2)
+    if (player.facing === 'left') ctx.fillRect(ax - 6, ay - 2, 2, 3)
+    if (player.facing === 'right') ctx.fillRect(ax + 4, ay - 2, 2, 3)
+    ctx.strokeStyle = 'rgba(143,248,255,0.5)'
+    ctx.beginPath()
+    ctx.arc(ax, ay, 8, 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.font = '6px Silkscreen, monospace'
+    ctx.fillStyle = '#8ff8ff'
+    ctx.fillText(player.label, ax - player.label.length * 1.9, ay - 12)
   }
 
   // power-out darkness
