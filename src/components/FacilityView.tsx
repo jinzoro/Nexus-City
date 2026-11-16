@@ -19,6 +19,7 @@ import {
   type PlanPlayer,
 } from '../engine/interior'
 import { dialogueFor, type DialogueReply, type DialogueTree } from '../data/dialogue'
+import { DEFAULT_CITIZEN } from '../engine/citizenSprite'
 import { formatNumber, Meter, SectionLabel, StatusBadge, statusColor } from './ui'
 import { Icon } from './Icons'
 import { FacilityChannel } from './FacilityChannel'
@@ -364,7 +365,7 @@ export function FacilityView() {
     () =>
       presence
         .filter((p) => building && p.buildingId === building.id)
-        .map((p) => ({ name: p.handle, body: p.body, visor: p.visor, self: p.userId === myId })),
+        .map((p) => ({ name: p.handle, body: p.body, visor: p.visor, built: p.built, self: p.userId === myId })),
     [presence, building, myId],
   )
   const visitorsKey = visitors.map((v) => `${v.name}:${v.self}`).join('|')
@@ -394,9 +395,10 @@ export function FacilityView() {
     playerRef.current = {
       ...spawn,
       facing: 'up',
-      body: myProfile?.body ?? '#22e6ff',
-      visor: myProfile?.visor ?? '#8ff8ff',
-      built: myProfile?.built ?? 0,
+      body: myProfile?.body ?? DEFAULT_CITIZEN.body,
+      visor: myProfile?.visor ?? DEFAULT_CITIZEN.visor,
+      built: myProfile?.built ?? DEFAULT_CITIZEN.built,
+      walking: false,
       label: myProfile?.handle ?? 'CITIZEN',
     }
     setSignals(npcs.filter((n) => !n.visitor).length)
@@ -441,6 +443,7 @@ export function FacilityView() {
       if (p) {
         const vx = (keys.has('right') ? 1 : 0) - (keys.has('left') ? 1 : 0)
         const vy = (keys.has('down') ? 1 : 0) - (keys.has('up') ? 1 : 0)
+        p.walking = vx !== 0 || vy !== 0
         if (vx !== 0 || vy !== 0) {
           const len = Math.hypot(vx, vy)
           const speed = 4.4

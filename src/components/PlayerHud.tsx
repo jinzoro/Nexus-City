@@ -1,6 +1,8 @@
 import { useCityStore } from '../state/useCityStore'
 import { useSocialStore } from '../social/useSocialStore'
+import { socialEnabled } from '../social/client'
 import { PixelCitizen } from '../social/PixelCitizen'
+import { DEFAULT_CITIZEN } from '../engine/citizenSprite'
 import { Icon } from './Icons'
 
 export function PlayerHud() {
@@ -13,15 +15,17 @@ export function PlayerHud() {
   const togglePlayerMode = useCityStore((s) => s.togglePlayerMode)
   const playerStop = useCityStore((s) => s.playerStop)
   const profile = useSocialStore((s) => s.profile)
-  const online = useSocialStore((s) => s.status === 'online')
   const signOut = useSocialStore((s) => s.signOut)
 
-  if (!online || !profile) return null
+  // A guest still walks a citizen, so they still get the controls. Only the
+  // account-backed bits (log out) need a profile.
+  if (!profile && socialEnabled) return null
+  const look = profile ?? DEFAULT_CITIZEN
 
   return (
     <div className="player-hud">
       <div className="player-hud__avatar">
-        <PixelCitizen profile={profile} size={20} />
+        <PixelCitizen profile={look} size={20} />
         <span className={`player-hud__dot ${moving ? 'player-hud__dot--moving' : ''}`} />
       </div>
       <div className="player-hud__info">
@@ -42,9 +46,11 @@ export function PlayerHud() {
         <button className="mini-btn" onClick={togglePlayerMode} title="Toggle mode (C)">MODE</button>
         <button className="mini-btn" onClick={playerStop} title="Stop movement" disabled={!moving}>STOP</button>
       </div>
-      <button className="mini-btn player-hud__logout" onClick={() => void signOut()} title="Log out of NEXUS">
-        <Icon name="logout" size={11} /> LOG OUT
-      </button>
+      {profile ? (
+        <button className="mini-btn player-hud__logout" onClick={() => void signOut()} title="Log out of NEXUS">
+          <Icon name="logout" size={11} /> LOG OUT
+        </button>
+      ) : null}
     </div>
   )
 }

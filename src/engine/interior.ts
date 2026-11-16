@@ -67,6 +67,8 @@ export interface Npc {
   self: boolean
   body: string
   visor: string
+  /** Silhouette variant, mirrors the profile's `built`. */
+  built: number
   x: number
   y: number
   tx: number
@@ -80,6 +82,7 @@ export interface VisitorSprite {
   name: string
   body: string
   visor: string
+  built: number
   self: boolean
 }
 
@@ -323,7 +326,7 @@ export function spawnNpcs(
   const count = npcCountFor(building, floor, totalFloors, plan.archetype, hour)
   const roles = ROLES[plan.archetype]
   const npcs: Npc[] = []
-  const make = (visitor: boolean, self: boolean, name: string, body: string, visor: string): Npc => {
+  const make = (visitor: boolean, self: boolean, name: string, body: string, visor: string, built: number): Npc => {
     const s = spot()
     const t = spot()
     return {
@@ -334,6 +337,7 @@ export function spawnNpcs(
       self,
       body,
       visor,
+      built,
       x: s.x + 0.5,
       y: s.y + 0.5,
       tx: t.x + 0.5,
@@ -345,10 +349,10 @@ export function spawnNpcs(
   }
   for (let i = 0; i < count; i++) {
     const name = `${NAME_A[Math.floor(rng() * NAME_A.length)]}${NAME_B[Math.floor(rng() * NAME_B.length)]}${rng() < 0.3 ? `-${Math.floor(rng() * 90 + 10)}` : ''}`
-    npcs.push(make(false, false, name, SUITS[Math.floor(rng() * SUITS.length)], VISORS[Math.floor(rng() * VISORS.length)]))
+    npcs.push(make(false, false, name, SUITS[Math.floor(rng() * SUITS.length)], VISORS[Math.floor(rng() * VISORS.length)], Math.floor(rng() * 3)))
   }
   // You are the on-foot avatar, not a second body on the floor plan.
-  for (const v of visitors) if (!v.self) npcs.push(make(true, false, v.name, v.body, v.visor))
+  for (const v of visitors) if (!v.self) npcs.push(make(true, false, v.name, v.body, v.visor, v.built))
   return npcs
 }
 
@@ -387,6 +391,8 @@ export interface PlanPlayer {
   visor: string
   /** Silhouette variant, mirrors the profile's `built`. */
   built?: number
+  /** True while WASD is held, so the plan avatar plays the walk cycle. */
+  walking?: boolean
   label: string
 }
 
@@ -487,6 +493,13 @@ export function drawFloorPlan(
 
   const px = (x: number) => PLAN_OX + x * PLAN_CELL
   const py = (y: number) => PLAN_OY + y * PLAN_CELL
+  // Labels are centred under the sprite but must stay inside the plan frame.
+  const labelX = (text: string, centerX: number) =>
+    Math.max(
+      PLAN_OX + 2,
+      Math.min(PLAN_OX + PLAN_COLS * PLAN_CELL - text.length * 2 - 2, centerX - text.length * 2),
+    )
+  const shortName = (name: string) => (name.length > 14 ? `${name.slice(0, 13)}…` : name)
 
   // shell
   ctx.fillStyle = '#0c1322'
@@ -598,10 +611,20 @@ export function drawFloorPlan(
     ctx.fillStyle = n.visor
     ctx.fillRect(nx - 1, ny - 4, 3, 2)
     if (n.visitor) {
+      // Linked citizens wear the same sprite as their street avatar, just
+      // smaller, so a visitor looks like the person you met outside.
+      const groundY = py(n.y) + PLAN_CELL * 0.42
+      const facing: 'left' | 'right' | 'down' =
+        Math.abs(n.tx - n.x) > 0.1 ? (n.tx > n.x ? 'right' : 'left') : 'down'
+      drawCitizen(ctx, { body: n.body, visor: n.visor, built: n.built }, nx, groundY, 0.55, {
+        facing,
+        walking: moving,
+        time,
+      })
       ctx.font = '6px Silkscreen, monospace'
       ctx.fillStyle = n.self ? '#63ff9b' : '#8ff8ff'
-      const tag = n.self ? `${n.name} (YOU)` : n.name
-      ctx.fillText(tag, nx - tag.length * 2, ny - 8)
+      const tag = shortName(n.self ? `${n.name} (YOU)` : n.name)
+      ctx.fillText(tag, labelX(tag, nx), groundY - CITIZEN_SIZE * 0.55 - 3)
     }
   }
 
@@ -623,11 +646,12 @@ export function drawFloorPlan(
       ax,
       ay,
       scale,
-      { facing: player.facing, shadow: true },
+      { facing: player.facing, walking: player.walking, time, shadow: true },
     )
     ctx.font = '6px Silkscreen, monospace'
     ctx.fillStyle = '#8ff8ff'
-    ctx.fillText(player.label, ax - player.label.length * 1.9, ay - CITIZEN_SIZE * scale - 2)
+    const label = shortName(player.label)
+    ctx.fillText(label, labelX(label, ax), ay - CITIZEN_SIZE * scale - 2)
   }
 
   // power-out darkness

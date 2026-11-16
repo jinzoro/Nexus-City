@@ -33,7 +33,7 @@ import {
   drawStationCrowds,
 } from './dynamicRenderer'
 import { renderStaticLayers } from './staticRender'
-import { drawCitizen } from './citizenSprite'
+import { DEFAULT_CITIZEN, drawCitizen } from './citizenSprite'
 import { findPath, nearestWalkable } from './walkGrid'
 import { type Camera, type View, clamp, getBuildingBounds, isBoundsVisible, isPointInBounds, project } from './renderUtils'
 import { useCityStore } from '../state/useCityStore'
@@ -114,6 +114,8 @@ export class CityEngine {
   /** Multiplier applied on top of the AUTO profile when the FPS watchdog fires (up to ~2.6). */
   private autoScale = 1
   private fpsWatch = { frames: 0, windowStart: 0, lowSeconds: 0, lastShot: 0 }
+  /** FPS dips before this timestamp are boot cost, not a slow machine. */
+  private fpsWarmupUntil = 0
   private daylight = 1
   private weather: ViewWeather = 'clear'
   private selectedEntity: { kind: EntityKind; id: string } | null = null
@@ -193,6 +195,7 @@ export class CityEngine {
     this.bind()
     this.last = performance.now()
     this.fpsWatch = { frames: 0, windowStart: this.last, lowSeconds: 0, lastShot: 0 }
+    this.fpsWarmupUntil = this.last + 12_000
     document.addEventListener('visibilitychange', this.onVisibility)
     this.raf = requestAnimationFrame(this.tick)
   }
@@ -342,6 +345,13 @@ export class CityEngine {
     watch.frames = 0
     watch.windowStart = now
     if (document.hidden) return
+    // Boot is noisy: building the static layers tanks FPS for a few seconds.
+    // Never degrade (or toast) on that, or the first thing a player sees is a
+    // quality warning on top of onboarding.
+    if (now < this.fpsWarmupUntil) {
+      watch.lowSeconds = 0
+      return
+    }
     if (fps < 30) {
       watch.lowSeconds += 1
       if (watch.lowSeconds >= 4 && now - watch.lastShot > 6000) {
@@ -500,7 +510,7 @@ export class CityEngine {
     const prof = useSocialStore.getState().profile
     const look = prof
       ? { body: prof.body, visor: prof.visor, built: prof.built }
-      : { body: '#22e6ff', visor: '#8ff8ff', built: 0 }
+      : DEFAULT_CITIZEN
     const p = useCityStore.getState().player
     const pt = project(this.view, p.x, p.y, 0.5)
     const zoom = this.camera.zoom

@@ -18,6 +18,7 @@ import { ambient } from '../audio/ambient'
 import { defaultBookmarks, GOALS, createNewsItem } from '../data/world'
 import { createEventForType } from '../data/events'
 import { WORLD_SIZE } from '../data/city'
+import { useSocialStore } from '../social/useSocialStore'
 import {
   CASCADE_RULES,
   createCascadeEvent,
@@ -365,15 +366,20 @@ const seedLog: LogEntry[] = [
   },
 ]
 
-const savedPlayer = (() => {
+/** Old shared key, kept as the guest slot and as a one-time migration source. */
+const LEGACY_PLAYER_KEY = 'nexus.player'
+
+function readSavedPlayer(key: string): { x: number; y: number } | null {
   try {
-    const raw = window.localStorage.getItem('nexus.player')
+    const raw = window.localStorage.getItem(key)
     const parsed = raw ? JSON.parse(raw) : null
     return parsed && typeof parsed.x === 'number' && typeof parsed.y === 'number' ? parsed : null
   } catch {
     return null
   }
-})()
+}
+
+const savedPlayer = readSavedPlayer(LEGACY_PLAYER_KEY)
 
 const clampCell = (v: number) => Math.max(0, Math.min(WORLD_SIZE, v))
 
@@ -783,14 +789,50 @@ export const useCityStore = create<CityStore>()((set, get) => ({
   },
 }))
 
+/** Walk positions are per citizen so a guest never shifts an account's spot. */
+const playerStorageKey = (userId: string | null) => `${LEGACY_PLAYER_KEY}:${userId ?? 'guest'}`
+
+let playerOwnerId: string | null = null
+let playerOwnerKnown = false
 let playerPersistTimer = 0
+
+/** Move the citizen to the position saved for whoever is now signed in. */
+function adoptPlayerPosition() {
+  const userId = useSocialStore.getState().profile?.id ?? null
+  if (playerOwnerKnown && userId === playerOwnerId) return
+  const previous = playerOwnerId
+  playerOwnerKnown = true
+  playerOwnerId = userId
+  // Accounts fall back to the old shared key once, so existing players keep
+  // the spot they left off at.
+  const saved = readSavedPlayer(playerStorageKey(userId)) ?? (userId ? savedPlayer : null)
+  if (!saved) {
+    if (previous !== null || userId !== null) {
+      useCityStore.getState().setPlayer({
+        x: defaultPlayer.x,
+        y: defaultPlayer.y,
+        moving: false,
+        target: null,
+        path: [],
+      })
+    }
+    return
+  }
+  useCityStore.getState().setPlayer({ x: saved.x, y: saved.y, moving: false, target: null, path: [] })
+}
+
+useSocialStore.subscribe((state, prev) => {
+  if ((state.profile?.id ?? null) !== (prev.profile?.id ?? null)) adoptPlayerPosition()
+})
+adoptPlayerPosition()
+
 useCityStore.subscribe((state, prev) => {
   if (state.player === prev.player) return
   window.clearTimeout(playerPersistTimer)
   playerPersistTimer = window.setTimeout(() => {
     try {
       const p = useCityStore.getState().player
-      window.localStorage.setItem('nexus.player', JSON.stringify({ x: p.x, y: p.y }))
+      window.localStorage.setItem(playerStorageKey(playerOwnerId), JSON.stringify({ x: p.x, y: p.y }))
     } catch { /* storage unavailable */ }
   }, 800)
 })

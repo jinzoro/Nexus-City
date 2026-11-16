@@ -439,14 +439,16 @@ Each vehicle is drawn as a small isometric box, not a flat quad:
   MODE / STOP buttons and a red **LOG OUT** button. LOG OUT is reachable from four
   places so it is never hidden: PlayerHud, the TopBar actions cluster, PROFILE >
   IDENTITY, and the FacilityView header (visible while chatting inside a building,
-  where the fullscreen facility layer covers the HUD). Renders only when the social
-  profile is online;
-  uses per-value selectors so per-frame movement doesn't re-render the HUD
-  more than once per cell.
+  where the fullscreen facility layer covers the HUD). Guests (offline build, or
+  no profile yet) get the same HUD with the default citizen and no LOG OUT;
+  account-only paths still require the profile. Uses per-value selectors so
+  per-frame movement doesn't re-render the HUD more than once per cell.
 - Player state lives in `useCityStore.player` (`PlayerState`: x/y/facing/
-  moving/mode/target/path). Position persists to `localStorage['nexus.player']`
-  via a debounced store subscription (800 ms after the last move) and is
-  restored on boot; targets are clamped to the world grid.
+  moving/mode/target/path). Position persists to
+  `localStorage['nexus.player:<profile id>']` (`:guest` without an account) via
+  a debounced store subscription (800 ms after the last move) and is restored
+  when that identity signs in; the old shared `nexus.player` key is read once as
+  a migration source. Targets are clamped to the world grid.
 - The engine imports both stores directly (no `globalThis` bridges); the
   store imports `CityEngine` as a type only, so there is no runtime cycle.
 
@@ -482,8 +484,13 @@ progress.
   13:00, residential/entertainment 22:00), clamped 0–24. Night markets are
   empty; night hab-blocks are full.
 - **Presence avatars**: signed-in visitors whose presence `buildingId`
-  matches the open facility spawn as named wanderers with name tags
-  (`HANDLE (YOU)` for yourself), alongside the simulated occupants.
+  matches the open facility spawn as named wanderers wearing the same shared
+  citizen sprite as the street (suit, visor and `built`), with clamped name
+  tags, alongside the simulated occupants. You are never spawned twice: your
+  own presence is skipped because the on-foot avatar already represents you.
+- **On-foot avatar** walks with the sprite's four-frame leg cycle, mirrors when
+  heading left, dims the visor when heading up, and keeps its label inside the
+  plan frame.
 - **FacilityView** defaults to FLOOR PLAN with a FLOOR PLAN / SECTION toggle
   (SECTION keeps the old exterior cross-section). Power off darkens the plan
   to backup-cell emergency dots; security lockdown seals doors red. The

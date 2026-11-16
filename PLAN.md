@@ -10,53 +10,15 @@ Status: 2026-11-16. Roadmap history and architecture live in `HANDOFF.md`.
 
 ## 1. Bug fixes
 
-### P0 — wrong or missing for a real player
-
-**1. Guest sessions have no citizen HUD.**
-`PlayerHud` returns `null` unless a Supabase profile is loaded, so the offline
-build (`socialEnabled === false`) shows the citizen walking the city with no
-coordinates, no MODE/STOP/LOCATE buttons and no logout slot. Keyboard `L`/`C`
-work but nothing is discoverable.
-- Fix: render the HUD whenever the city is entered, using a fallback identity
-  (same cyan/ice default as the city sprite) and hiding only the LOG OUT action
-  when there is no account.
-- Files: `src/components/PlayerHud.tsx`, `src/social/useSocialStore.ts`.
-- Prove: offline build → ENTER AS GUEST → HUD shows coords, LOCATE/STOP/MODE work,
-  LOG OUT absent, no console errors.
-
-**2. AUTO-TUNE toast fires during boot.**
-The FPS watchdog starts on mount; the worker layer build drops frames, so the
-first thing a new player sees is “Frame rate dipped — internal buffer reduced”,
-mid-onboarding. The degrade itself is fine; the timing and the toast are not.
-- Fix: ignore the first ~10 s after mount (or until the intro gate is dismissed)
-  and only toast when the drop actually changes quality after play has started;
-  keep the resize silent on boot.
-- Files: `src/engine/CityEngine.ts` (`runFpsWatch`), `src/App.tsx` (toast).
-- Prove: fresh offline build, enter city, watch 15 s of onboarding — no toast;
-  artificially throttle CPU to force a post-boot drop and confirm one toast.
+Shipped 2026-11-16: guest citizen HUD (fallback identity, no LOG OUT), boot-time
+FPS watchdog silenced for the first 12 s, floor-plan walk cycle for the on-foot
+avatar, visitors wearing their own `built` silhouette, labels clamped inside the
+plan, and per-identity walk positions (`nexus.player:<id>` / `:guest`, with the
+old shared key read once as migration).
 
 ### P1 — visible inconsistencies
 
-**3. Interior avatar does not animate or respect `built` for others.**
-The on-foot plan avatar now uses the shared sprite (fixed), but it never plays
-the walk cycle, and linked visitors are still 5×6 blocks because `VisitorSprite`
-carries no `built`.
-- Fix: pass a `walking` flag from FacilityView's movement effect; add `built` to
-  `VisitorSprite`/`Npc` and use `drawCitizen` for visitors too (scaled ~0.55),
-  keeping the `(YOU)` tag only if a visitor equals self.
-- Files: `src/engine/interior.ts`, `src/components/FacilityView.tsx`.
-- Prove: walk the plan → legs cycle; open a busy building → visitors vary in
-  silhouette and match their roster colours.
-
-**4. Guest citizen position is shared with accounts.**
-`nexus.player` is unnamespaced, so a guest walk shifts where an account resumes,
-and vice versa.
-- Fix: key the saved position by profile id (`nexus.player:<id>`, guest →
-  `nexus.player:guest`).
-- Files: `src/state/useCityStore.ts`.
-- Prove: walk as guest, reload, sign in → account keeps its own last position.
-
-**5. Mobile has no walk input.**
+**1. Mobile has no walk input.**
 Touch users can double-tap to walk but cannot steer continuously (already on the
 `HANDOFF.md` roadmap).
 - Fix: coarse-pointer-only virtual stick in the lower-left, clamped outside HUD
@@ -66,16 +28,12 @@ Touch users can double-tap to walk but cannot steer continuously (already on the
 
 ### P2 — polish / misleading labels
 
-**6. `RENDER 149%` in the coord rail is actually zoom.** `camera.zoom * 100`
+**2. `RENDER 149%` in the coord rail is actually zoom.** `camera.zoom * 100`
 is labelled RENDER, which reads as render load.
 - Fix: label it `ZOOM`, or show the real render scale from the engine.
 - Files: `src/App.tsx` (coord rail).
 
-**7. Interior NPC visitor labels can overflow the plan.** 6 px Silkscreen tags are
-centred by `length * 1.9` and run off the plan edge for long handles.
-- Fix: clamp the label x inside the plan bounds and truncate handles at ~14 chars.
-
-**8. Landing hero art is a static capture.** `public/og-image.png` no longer
+**3. Landing hero art is a static capture.** `public/og-image.png` no longer
 matches the in-game look (new skyline). Regenerate with
 `node scripts/gen-assets.mjs` after the next visual batch; keep the file under
 ~300 KB.
@@ -142,11 +100,10 @@ bookmarks, with export/import JSON.
 
 ## 3. Order I'd work in
 
-1. Bugs 1–2 (both small, both first-impression).
-2. Bugs 3–4 (consistency and persistence).
-3. Feature B (avatar preview) — cheap, and it locks in the shared-sprite fix.
-4. Bug 5 (touch) before any promotion aimed at phones.
-5. Features A, then C, then E/F depending on whether the next goal is “feels
+1. Bug 1 (touch) before any promotion aimed at phones; Bugs 2–3 when touching
+   the HUD or assets.
+2. Feature B (avatar preview) — cheap, and it locks in the shared-sprite fix.
+3. Features A, then C, then E/F depending on whether the next goal is “feels
    alive” or “has a game loop”.
 
 ## 4. Verification habits

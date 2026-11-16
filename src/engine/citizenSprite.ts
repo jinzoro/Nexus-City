@@ -29,6 +29,13 @@ export interface CitizenLook {
   built?: number
 }
 
+/** What a guest (or a profile still loading) walks as. */
+export const DEFAULT_CITIZEN: { body: string; visor: string; built: number } = {
+  body: '#22e6ff',
+  visor: '#8ff8ff',
+  built: 0,
+}
+
 const OUTLINE = '#05060f'
 
 export function citizenPixels(look: CitizenLook): CitizenPixel[] {
